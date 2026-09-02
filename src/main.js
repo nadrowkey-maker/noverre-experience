@@ -232,7 +232,7 @@ bouton.addEventListener('click', async () => {
 });
 surSon((ouvert) => {
   bouton.setAttribute('aria-pressed', String(ouvert));
-  motSon.textContent = ouvert ? 'Son' : 'Silence';
+  motSon.textContent = ouvert ? 'Sound' : 'Silent';
 });
 
 // Les trois barres du bouton, branchees sur le bus principal. Elles ne sont

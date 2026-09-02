@@ -147,6 +147,19 @@ export async function ouvrirNavigateur({ largeur = 1280, hauteur = 720, gpu = fa
     async avantChaqueDocument(source) {
       await cmd('Page.addScriptToEvaluateOnNewDocument', { source });
     },
+    /**
+     * Emule un appareil : taille de fenetre, rapport de pixels et tactile.
+     *
+     * Indispensable pour juger la mise en page d'un telephone : la largeur
+     * seule ne suffit pas, c'est `mobile: true` qui fait basculer les media
+     * queries `(pointer: coarse)` et la gestion du viewport.
+     */
+    async emulerAppareil({ largeur, hauteur, dpr = 3, mobile = true }) {
+      await cmd('Emulation.setDeviceMetricsOverride', {
+        width: largeur, height: hauteur, deviceScaleFactor: dpr, mobile,
+      });
+      await cmd('Emulation.setTouchEmulationEnabled', { enabled: mobile });
+    },
     /** Force une preference de media, par exemple le mouvement reduit. */
     async emulerMedia(features) {
       await cmd('Emulation.setEmulatedMedia', { features });

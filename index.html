@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -7,7 +7,7 @@
      textes. Ce qui est ici est factuel et suffit a ne pas livrer une page sans
      titre ; rien n'y est invente sur le projet. -->
 <title>Noverre</title>
-<meta name="description" content="Une visite du batiment, etage par etage, au defilement.">
+<meta name="description" content="A walk through the building, floor by floor, at the speed of your scroll.">
 <!-- Sans cette ligne le navigateur reclame /favicon.ico a chaque chargement et
      recolte un 404. Un `data:` vide coupe la requete sans rien inventer : la
      vraie icone viendra avec les elements de marque. -->
@@ -64,7 +64,26 @@
        automatique donne la colonne 1 au premier et en CREE une deuxieme pour le
        second, qui pousse toute la scene sur le cote. */
     grid-row: 2; grid-column: 1;
-    width: 100%; aspect-ratio: 16 / 9;
+
+    /* LA BANDE EST BORNEE PAR LES DEUX DIMENSIONS, ET PAS SEULEMENT PAR LA
+       LARGEUR.
+
+       `width: 100%` seul suffit tant que la fenetre est plus large que haute au
+       format de la bande. Des qu'elle ne l'est plus -- un telephone en paysage,
+       une fenetre de bureau ecrasee -- la bande depasse en hauteur et se fait
+       COUPER : mesure sur un ecran de 932 x 430, elle faisait 122 % de la
+       hauteur et perdait 94 px en bas. Le bas de l'image, celui ou vit la
+       narration, disparaissait.
+
+       `100dvh` et non `100vh` : sur un telephone, la barre d'outils du
+       navigateur apparait et disparait au defilement, et `vh` garde la valeur
+       du plus grand des deux etats. La bande serait a nouveau coupee des que la
+       barre est visible. */
+    width: min(100%, calc(100vh * 16 / 9));
+    width: min(100%, calc(100dvh * 16 / 9));
+    justify-self: center;
+
+    aspect-ratio: 16 / 9;
     display: block; background: #000;
     will-change: filter;
   }
@@ -203,20 +222,34 @@
 
   /* --- L'indice de defilement -------------------------------------------- */
   #indice {
-    position: fixed; left: 50%; bottom: 34px; z-index: 6;
+    position: fixed; left: 50%; bottom: 30px; z-index: 6;
     transform: translateX(-50%);
-    width: 22px; height: 34px; border-radius: 12px;
-    border: 1px solid rgba(236,233,228,.35);
+    display: grid; justify-items: center; gap: 9px;
     opacity: 0; animation: indice-apparait 1.2s ease 200ms forwards;
     pointer-events: none;
   }
   #indice[hidden] { display: none; }
-  #indice span {
+
+  .souris {
+    position: relative; display: block;
+    width: 22px; height: 34px; border-radius: 12px;
+    border: 1px solid rgba(236,233,228,.35);
+  }
+  .souris i {
     position: absolute; left: 50%; top: 8px;
     width: 2px; height: 5px; border-radius: 1px;
     background: var(--texte); transform: translateX(-50%);
     animation: indice-glisse 1.9s cubic-bezier(.4,0,.2,1) infinite;
   }
+
+  /* LE MOT. Il dit quoi faire, la souris ne fait que le montrer -- donc c'est
+     le mot qui reste quand il n'y a pas de souris. */
+  .mot {
+    font: 500 10px/1 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .22em; text-transform: uppercase;
+    color: var(--texte);
+  }
+
   @keyframes indice-apparait { to { opacity: .75; } }
   @keyframes indice-glisse {
     0%   { transform: translate(-50%, 0);    opacity: 0; }
@@ -224,9 +257,24 @@
     72%  { transform: translate(-50%, 13px); opacity: 0; }
     100% { transform: translate(-50%, 13px); opacity: 0; }
   }
+  /* Sur un appareil tactile, le mot porte seul le mouvement : meme rythme que
+     le point de la souris, pour que le geste suggere soit le meme. */
+  @keyframes indice-mot {
+    0%   { transform: translateY(0);   opacity: .55; }
+    30%  { opacity: 1; }
+    75%  { transform: translateY(7px); opacity: 0; }
+    100% { transform: translateY(7px); opacity: 0; }
+  }
+
+  /* Sur un appareil tactile il n'y a pas de souris : on ne dessine pas
+     l'objet qu'on n'a pas. Le mot prend l'animation a son compte. */
+  @media (hover: none), (pointer: coarse) {
+    .souris { display: none; }
+    .mot { animation: indice-mot 1.9s cubic-bezier(.4,0,.2,1) infinite; }
+  }
 
   @media (prefers-reduced-motion: reduce) {
-    #indice span { animation: none; }
+    .souris i, .mot { animation: none; }
   }
 
   /* --- La bascule son ----------------------------------------------------- */
@@ -345,9 +393,14 @@
      Il descend sous le bouton du son, qui garde le coin. */
   #temoin {
     position: fixed; right: 20px; top: 52px; z-index: 5;
-    font: 12px/1 ui-monospace, Menlo, monospace;
+    font: 12px/1.35 ui-monospace, Menlo, monospace;
     color: var(--discret); background: rgba(0,0,0,.6);
     padding: 6px 8px; border-radius: 4px; pointer-events: none;
+    /* Sur un telephone il debordait et se coupait en deux lignes en travers de
+       l'ecran. Il doit rester LISIBLE la-bas : c'est sur un vrai telephone que
+       se mesure le plancher de trente images par seconde, et c'est lui qui
+       porte le chiffre. */
+    max-width: min(60vw, 30rem); text-align: right;
   }
   #temoin[data-degrade="true"] { color: #fc6; }
   /* Sous le plancher de 30 images par seconde, le temoin le dit franchement :
@@ -396,15 +449,15 @@
 </head>
 <body>
 
-<a class="evitement" href="#contenu">Aller au contenu</a>
+<a class="evitement" href="#contenu">Skip to content</a>
 
 <main id="contenu">
-  <section class="scene" aria-label="Noverre, etage par etage">
+  <section class="scene" aria-label="Noverre, floor by floor">
     <!-- Les libelles decrivent ce que l'image montre reellement. Ils ne sont
          pas du texte commercial en attente : un lecteur d'ecran doit savoir ce
          qu'il y a a l'ecran des maintenant. -->
     <canvas id="scene" role="img"
-            aria-label="La facade du batiment vue depuis la rue, la nuit se retirant sur le parc."></canvas>
+            aria-label="The facade seen from the street, night lifting over the park."></canvas>
 
     <!-- Le bassin : le seul ecran de la page rendu par WebGL. Il occupe la meme
          case de la grille que #scene et prend sa place sur la derniere
@@ -412,7 +465,7 @@
          l'arbre d'accessibilite partout ailleurs, donc les deux canvas ne sont
          jamais annonces ensemble. -->
     <canvas id="eau" hidden role="img"
-            aria-label="La piscine du toit a la tombee de la nuit, la ville au loin, l'eau qui bouge sous la main."></canvas>
+            aria-label="The roof pool at nightfall, the city beyond, the water moving under your hand."></canvas>
 
     <!-- LA NARRATION. Le texte est ecrit dans le DOM au changement de segment,
          et non quand il devient visible : un lecteur d'ecran doit le trouver
@@ -430,7 +483,7 @@
          Il vit dans le DOM du premier au dernier instant -- un lecteur d'ecran
          et un moteur de recherche doivent le trouver meme s'il n'est pas
          encore peint -- et ce sont l'opacite et `inert` qui le decouvrent. -->
-    <section id="faits" class="faits" inert aria-label="Noverre, les faits">
+    <section id="faits" class="faits" inert aria-label="Noverre, the facts">
       <div id="faits-lignes"></div>
     </section>
   </section>
@@ -438,9 +491,9 @@
 
 <!-- La bascule son : trois barres branchees sur le bus principal, qui bougent
      avec ce qu'on entend reellement. Elle reste accessible en permanence. -->
-<button id="son" type="button" aria-pressed="false" aria-label="Son">
+<button id="son" type="button" aria-pressed="false" aria-label="Sound">
   <span class="barres" aria-hidden="true"><i></i><i></i><i></i></span>
-  <span id="son-mot">Son</span>
+  <span id="son-mot">Sound</span>
 </button>
 
 <!-- LA PORTE, puis l'amorce. Elle couvre tout jusqu'au drop.
@@ -452,8 +505,8 @@
   <div id="porte-voile"></div>
   <div id="porte-choix">
     <div class="porte-boutons">
-      <button type="button" data-son="oui" class="principal">Entrer avec le son</button>
-      <button type="button" data-son="non">Entrer en silence</button>
+      <button type="button" data-son="oui" class="principal">Enter with sound</button>
+      <button type="button" data-son="non">Enter in silence</button>
     </div>
     <p id="porte-note">
       <svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18">
@@ -462,7 +515,7 @@
         <rect x="2.6" y="13.4" width="4" height="7" rx="2" fill="currentColor"/>
         <rect x="17.4" y="13.4" width="4" height="7" rx="2" fill="currentColor"/>
       </svg>
-      <span>La bande sonore fait partie de Noverre. C'est mieux avec.</span>
+      <span>The soundtrack is part of Noverre. It is better with it.</span>
     </p>
   </div>
 </div>
@@ -475,7 +528,17 @@
 
 <div id="curseur" aria-hidden="true"></div>
 
-<div id="indice" aria-hidden="true"><span></span></div>
+<!-- L'INDICE DE DEFILEMENT. `hidden` est indispensable : c'est la Porte qui le
+     leve, a la fin de l'amorce. Sans lui il s'affiche des le chargement, par
+     dessus la phrase de l'ecran d'entree -- et il invite a defiler alors que le
+     defilement ne repond pas encore.
+
+     La souris disparait sur un appareil tactile : il n'y en a pas. Le MOT, lui,
+     reste dans les deux cas -- c'est lui qui dit quoi faire. -->
+<div id="indice" hidden aria-hidden="true">
+  <span class="souris"><i></i></span>
+  <span class="mot">Scroll</span>
+</div>
 
 <div id="temoin"></div>
 

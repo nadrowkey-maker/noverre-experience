@@ -76,8 +76,8 @@ export const PORTE = {
   // Les deux libelles vivent dans index.html, pas ici : ils sont dans le DOM
   // des le premier octet, donc lisibles par un lecteur d'ecran et indexables,
   // ce qu'un texte injecte par le code ne serait pas au meme moment.
-  texte: ['Entrer avec le son', 'Entrer en silence'],
-  sousTitre: 'La bande sonore fait partie de Noverre. C\'est mieux avec.',
+  texte: ['Enter with sound', 'Enter in silence'],
+  sousTitre: 'The soundtrack is part of Noverre. It is better with it.',
   // Le son joue DEJA, doucement, sous les deux boutons : les insectes de la
   // nuit. Celui qui choisit le silence les a donc entendus une fois.
   //
