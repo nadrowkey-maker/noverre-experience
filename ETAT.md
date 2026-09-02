@@ -36,7 +36,8 @@ Les quatre recettes passent intégralement au moment d'écrire ces lignes.
 | Poids images, mobile 854 | **101,51 Mo** | 150 Mo cible | confortablement dessous |
 | Rapport mobile / bureau | **59 %** | | la surface n'en fait que 44 % |
 | JS + page, compressés | **96,2 ko** | 250 ko budget | 62 % du budget non consommé |
-| Audio livré | **31,27 Mo** | 29,05 sur Parkside | dix-sept pistes |
+| Audio livré | **14,37 Mo** | 29,05 sur Parkside | dix-sept pistes |
+| Audio **une fois décodé** | **249 Mo** | jamais mesuré ailleurs | c'est lui qui compte, pas le poids du fichier |
 | LCP, 4G lente simulée | **1,95 s** | < 2,5 s | |
 | Première image peinte | **2,54 s** | < 3 s | |
 | Parcours total | **85 hauteurs d'écran** | | 76 500 px à 900 px d'écran |
@@ -212,6 +213,44 @@ emplacements existent et sont à `null`.
 **L'icône du site.** `<link rel="icon" href="data:,">` coupe la requête pour ne
 pas récolter un 404 à chaque chargement. La vraie icône viendra avec les
 éléments de marque — le mot-symbole, lui, est arrivé et est en place.
+
+## La mémoire sur téléphone, et pourquoi le site y buguait
+
+Le site s'arrêtait de charger et ramait sur iPhone et iPad. Ce n'était pas le
+réseau. Deux causes, toutes deux mesurées, et **aucune des deux n'était visible
+dans le poids des fichiers**.
+
+**Le son décodé pesait 648 Mo.** Une piste occupe `durée × 48000 × canaux × 4`
+octets une fois décodée, quel que soit son poids en MP3 : le décodage multiplie
+par vingt-et-un. Les dix-sept pistes faisaient 31 Mo sur le disque et 648 en
+mémoire, tout décodé au clic sur la porte — mesuré dans le navigateur, 11,5 s de
+décodage cumulé et la dernière piste prête 8,5 s après le clic. La passation ne
+chiffre que la mémoire des images (§10.3), jamais celle du son.
+
+Neuf pistes sur dix-sept dépassaient les 60 à 90 s que la §6.5 prescrit, dont
+`eau` à **555 secondes**. Elles sont ramenées à 90, avec un raccord qui rend la
+boucle continue, et les nappes diffuses passent en mono — le site les place au
+gain, jamais au panoramique, donc leur stéréo ne portait rien. **648 → 249 Mo**,
+sans perte audible : les raccords de boucle sont mesurés, tous sous 5× le saut
+d'échantillon typique.
+
+**Et le téléphone recevait le jeu d'images du bureau.** Le seuil était
+`besoin <= 854`. Un iPhone de 430 px CSS a un rapport de pixels plafonné à 2,
+donc un besoin de 860 : **six pixels de trop**, et il basculait sur le jeu 1280.
+Une image de 1280 décodée occupe 3,52 Mio contre 1,56 — trois anneaux passaient
+de 187 à 422 Mo, pour 0,7 % de netteté que personne ne peut voir. Une tolérance
+de 15 % corrige ça sans toucher aux tablettes, qui gardent le jeu bureau.
+
+| | avant | après |
+|---|---|---|
+| iPhone 430 px | 422 + 648 = **1 070 Mo** | 187 + 249 = **436 Mo** |
+| iPad | 422 + 648 = **1 070 Mo** | 422 + 249 = **671 Mo** |
+
+**Un levier non tiré, et c'est votre décision.** Abaisser la fréquence du
+contexte audio à 32 kHz diviserait encore le son par 1,5 — 249 → 166 Mo. Mesure
+faite : la forêt monte à 19,4 kHz au seuil de 99,9 % de son énergie, donc un
+plafond à 16 kHz lui couperait du contenu réel. Inaudible pour la plupart des
+oreilles, mais c'est un arbitrage de qualité sonore et il ne se prend pas seul.
 
 ## Deux points à surveiller
 

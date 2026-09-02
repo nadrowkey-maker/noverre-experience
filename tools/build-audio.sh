@@ -28,10 +28,13 @@
 # Deux autres renommages, par honnetete de nommage : Noverre a un restaurant, pas
 # un bar. Personne ne doit chercher un bar dans les fichiers.
 #
-# TOUT LE RESTE EST COPIE OCTET POUR OCTET. Les sources sont deja des mp3 : les
-# re-encoder aux debits que la mesure « conseille » serait une seconde generation
-# de perte sur un materiau qui n'a plus de master. La §6.5 raisonne depuis des
-# masters ; ici on n'en a pas, et la regle qui prime est de ne pas degrader.
+# TOUTES LES PISTES SONT RE-ENCODEES, et ce n'etait pas le cas au depart.
+#
+# Le premier jet les copiait octet pour octet, pour ne pas payer une seconde
+# generation de perte sur un materiau qui n'a plus de master. C'etait le bon
+# raisonnement sur le mauvais critere : ce qui coute sur ce site n'est pas le
+# poids du fichier, c'est la MEMOIRE une fois decode -- et elle etait a 648 Mo.
+# Une generation de MP3 en plus ne s'entend pas ; un onglet qui se recharge, si.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -51,41 +54,64 @@ OUT="$ROOT/audio"
 # fenetres. Gardee a son debit d'origine et non allegee : elle est FILTREE EN
 # TEMPS REEL par le scellement, et un filtre revele les defauts d'encodage au
 # lieu de les masquer (§6.5).
+# source : destination : secondes de boucle : canaux : debit
+#
+# LES DUREES ET LES CANAUX SONT LA POUR LA MEMOIRE, pas pour le poids du
+# fichier. Une piste decodee occupe `duree x 48000 x canaux x 4` octets : les
+# dix-sept pesaient 31 Mo sur le disque et 648 Mo en memoire, tout decode au
+# clic sur la porte. Mesure dans le navigateur : 11,5 s de decodage cumule, la
+# derniere piste prete 8,5 s apres le clic. Un onglet de telephone n'a pas cette
+# memoire, et c'etait la cause des a-coups et des chargements qui s'arretaient.
+#
+# Deux leviers, tous deux sans perte audible :
+#
+#   la duree    la §6.5 prescrit 60 a 90 s. Neuf pistes la depassaient, dont
+#               `eau` a 555 secondes. On ramene a 90, avec un raccord qui rend
+#               la boucle continue (voir tools/boucler.sh).
+#   les canaux  les nappes diffuses passent en MONO. Le site les place au GAIN,
+#               jamais au panoramique : leur stereo ne porte rien.
+#
+# Ce qui garde sa stereo : les deux musiques, et rien d autre. Ce sont les
+# seules dont l image stereo se remarque.
+#
+# `vent` reste a 45 s parce qu il ne dure pas plus : le §6.8 previent qu il va
+# se mettre a boucler maintenant qu il est expose, et la vraie reponse serait
+# une prise plus longue, pas une coupe.
 TABLE="
-foret-jour:foret-jour
-parc-nuit:parc-nuit
-parc-jour:parc-jour
-ville-lointaine:lointain
-ville-interieure:lointain-interieur
-vent:vent
-eau:eau
-spa-bourdon:spa-bourdon
-spa-remous:spa-remous
-musique-velos:musique-velos
-musique-bar:musique-restaurant
-piece-sport:piece-sport
-piece-bar:piece-restaurant
-rideau:rideau
-air-seuil:air-seuil
-hall-cles-pas:hall-cles-pas
-logo:logo
+foret-jour:foret-jour:90:1:96
+parc-nuit:parc-nuit:90:1:96
+parc-jour:parc-jour:90:1:96
+ville-lointaine:lointain:90:1:64
+ville-interieure:lointain-interieur:55:1:64
+vent:vent:45:1:64
+eau:eau:90:1:96
+spa-bourdon:spa-bourdon:54:1:64
+spa-remous:spa-remous:38:1:64
+musique-velos:musique-velos:120:2:192
+musique-bar:musique-restaurant:120:2:192
+piece-sport:piece-sport:90:1:96
+piece-bar:piece-restaurant:90:1:96
+rideau:rideau:5:2:128
+air-seuil:air-seuil:4:2:96
+hall-cles-pas:hall-cles-pas:7:2:128
+logo:logo:12:2:192
 "
 
 total=0
+pcm=0
 echo
-printf "  %-24s %-24s %9s\n" "source" "livre" "taille"
+printf "  %-24s %7s %4s %13s %16s\n" "livre" "duree" "can" "mp3" "decodee"
 for ligne in $TABLE; do
-  de="${ligne%%:*}"; vers="${ligne##*:}"
+  IFS=: read -r de vers sec ch br <<< "$ligne"
   [ -f "$SRC/$de.mp3" ] || { echo "  MANQUANT : $de.mp3" >&2; continue; }
-  cp "$SRC/$de.mp3" "$OUT/$vers.mp3"
+  bash "$ROOT/tools/boucler.sh" "$SRC/$de.mp3" "$OUT/$vers.mp3" "$sec" "$ch" "$br"
   o=$(stat -c%s "$OUT/$vers.mp3")
+  d=$(ffprobe -v error -show_entries format=duration -of csv=p=0:nk=1 "$OUT/$vers.mp3")
   total=$((total + o))
-  marque=""
-  [ "$de" != "$vers" ] && marque="  <- renommee"
-  awk -v a="$de.mp3" -v b="$vers.mp3" -v o="$o" -v m="$marque" \
-      'BEGIN{ printf "  %-24s %-24s %6.2f Mo%s\n", a, b, o/1048576, m }'
+  pcm=$(awk -v p="$pcm" -v d="$d" -v c="$ch" 'BEGIN{ printf "%.0f", p + d*48000*c*4 }')
 done
 
 echo
-awk -v t="$total" 'BEGIN{ printf "  TOTAL livre : %.2f Mo\n", t/1048576 }'
+awk -v t="$total" -v p="$pcm" 'BEGIN{
+  printf "  TOTAL livre : %.2f Mo sur le disque, %.0f Mo une fois decode\n", t/1048576, p/1048576 }'
 echo "  retiree : ville-proche (§6.8 -- ses evenements sont le tell d'un centre-ville)"

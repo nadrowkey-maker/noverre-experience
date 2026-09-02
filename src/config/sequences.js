@@ -58,10 +58,30 @@ let jeuChoisi = null;
  * coute plus cher au pixel. La memoire et le decodage, eux, suivent bien la
  * surface -- 1,56 Mio par image decodee contre 3,52.
  */
+/**
+ * Tolerance d'agrandissement avant de passer au jeu bureau.
+ *
+ * 1,15, ET SANS ELLE LA REGLE SE RETOURNE CONTRE ELLE-MEME.
+ *
+ * Le seuil etait `besoin <= 854`. Un iPhone de 430 px CSS a un rapport de
+ * pixels plafonne a 2, donc un besoin de 860 : SIX PIXELS de trop, et il
+ * recevait le jeu bureau. Or une image de 1280 decodee occupe 3,52 Mio contre
+ * 1,56 -- trois anneaux de quarante passaient de 187 a 422 Mo sur un telephone,
+ * pour 0,7 % de nettete en plus que personne ne peut voir.
+ *
+ * Mesure sur un ecran de 430 x 932 : le temoin annoncait « normal 1280px ».
+ *
+ * Avec la tolerance, ce meme telephone prend le jeu mobile et l'agrandit de
+ * 0,7 %. Une tablette, elle, reste au jeu bureau : un iPad de 834 px CSS
+ * demande 1668 pixels, bien au-dela des 982 que la tolerance autorise.
+ */
+const TOLERANCE_AGRANDISSEMENT = 1.15;
+
 export function choisirJeu({ forcerMobile = false } = {}) {
   if (jeuChoisi) return jeuChoisi;
   const rapport = Math.min(window.devicePixelRatio || 1, 2);
-  jeuChoisi = (forcerMobile || window.innerWidth * rapport <= 854) ? 854 : 1280;
+  const besoin = window.innerWidth * rapport;
+  jeuChoisi = (forcerMobile || besoin <= 854 * TOLERANCE_AGRANDISSEMENT) ? 854 : 1280;
   return jeuChoisi;
 }
 
