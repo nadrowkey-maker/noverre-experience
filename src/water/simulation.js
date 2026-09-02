@@ -81,11 +81,40 @@ export function creerQuad(gl) {
 /** L'identite, pour les passes plein cadre. */
 const IDENTITE = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
 
+/**
+ * Les deux extensions dont l'etat en flottant depend, et ce qu'on fait sans.
+ *
+ * ELLES N'ETAIENT NI VERIFIEES NI RATTRAPEES, et c'est un defaut qui ne se voit
+ * pas depuis un poste de developpement : ici les deux sont la, toujours.
+ *
+ *   EXT_color_buffer_float     sans elle on ne peut pas RENDRE dans une texture
+ *                              flottante. Elle etait bien testee.
+ *
+ *   OES_texture_float_linear   sans elle on ne peut pas FILTRER une texture
+ *                              flottante en lineaire. Elle etait demandee et sa
+ *                              reponse jetee -- or une texture flottante posee
+ *                              en LINEAR sur un appareil qui ne sait pas la
+ *                              filtrer est une texture INCOMPLETE : chaque
+ *                              lecture rend (0,0,0,1), sans erreur, sans
+ *                              message, sans rien dans la console. La
+ *                              simulation tourne, la surface reste plate, et
+ *                              l'eau ne bouge pas. Exactement le defaut
+ *                              silencieux qu'on ne peut pas diagnostiquer a
+ *                              distance.
+ *
+ * Le repli est le filtrage AU PLUS PROCHE. Il ne coute presque rien ici : la
+ * passe de simulation ne lit que des voisins alignes sur le texel, ou lineaire
+ * et au plus proche donnent le meme resultat. Seule la lecture de la normale
+ * par la surface y perd, et elle y perd peu -- 256 x 256 etale sur la zone du
+ * bassin, sous une refraction de 0,07. Une eau legerement moins douce vaut
+ * mieux qu'une eau immobile.
+ */
 export function creerSimulation(gl) {
   if (!gl.getExtension('EXT_color_buffer_float')) {
     throw new Error('EXT_color_buffer_float indisponible');
   }
-  gl.getExtension('OES_texture_float_linear');
+  const filtrable = !!gl.getExtension('OES_texture_float_linear');
+  const FILTRE = filtrable ? gl.LINEAR : gl.NEAREST;
 
   const vao = creerQuad(gl);
   const prog = {
@@ -106,13 +135,22 @@ export function creerSimulation(gl) {
     gl.bindTexture(gl.TEXTURE_2D, t);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, RESOLUTION, RESOLUTION, 0,
                   gl.RGBA, gl.FLOAT, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, FILTRE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, FILTRE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     const f = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, f);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+    // ON DEMANDE SON AVIS AU PILOTE. Un attachement flottant refuse rend un
+    // framebuffer INCOMPLET, et tout ce qui suit devient un dessin dans le
+    // vide : aucune erreur ne remonte, la surface reste plate. C'est le meme
+    // defaut muet que le filtrage, et il se ferme de la meme facon -- en
+    // posant la question, une fois, a la creation.
+    const etat = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (etat !== gl.FRAMEBUFFER_COMPLETE) {
+      throw new Error(`cible flottante refusee (0x${etat.toString(16)})`);
+    }
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     return { t, f };
@@ -214,6 +252,8 @@ export function creerSimulation(gl) {
     enfiler,
     marquerInteraction() { derniereInteraction = temps; },
     get texture() { return etats[lecture].t; },
+    /** Ce que l'appareil sait faire, pour que le temoin puisse le dire. */
+    filtrage: filtrable ? 'lineaire' : 'au plus proche',
 
     /**
      * Avance d'une trame. Pas de temps FIXE : la simulation ne depend pas de la

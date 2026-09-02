@@ -19,6 +19,13 @@ import {
   RING_SIZE,
 } from '../config/constants.js';
 
+/** Lit ?eau=1 ou ?eau=0, pour mesurer ce que le bassin coute vraiment. */
+function forcageEau() {
+  const v = new URLSearchParams(location.search).get('eau');
+  if (v === null) return null;
+  return v !== '0' && v !== 'false';
+}
+
 /** Lit ?degraded=1 ou ?degraded=0. Renvoie null si le parametre est absent. */
 function forcage() {
   const v = new URLSearchParams(location.search).get('degraded');
@@ -82,7 +89,19 @@ export function signalerTrame(dtMs, maintenant) {
 
   // Il faut une fenetre pleine avant de juger : les premieres trames d'une page
   // sont toujours irregulieres, et les compter ferait basculer tout le monde.
-  if (fenetre.length < 60) return etat;
+  //
+  // MAIS ELLE SE MESURE EN TEMPS, PAS EN NOMBRE DE TRAMES. La condition etait
+  // `fenetre.length < 60` sur une fenetre de deux secondes : elle exigeait donc
+  // TRENTE IMAGES PAR SECONDE pour avoir le droit de juger. Autrement dit, plus
+  // l'appareil peinait, moins le declencheur pouvait partir -- et sous les
+  // trente images par seconde, c'est-a-dire exactement le cas qu'il existe pour
+  // rattraper, il ne partait JAMAIS. Mesure a l'appui : un telephone bride a
+  // quatre fois tournait a 3 img/s, et le temoin annoncait « normal ».
+  //
+  // On demande donc que la fenetre COUVRE sa duree, avec assez de trames pour
+  // qu'un a-coup isole ne decide de rien.
+  const couvre = fenetre[fenetre.length - 1].t - fenetre[0].t;
+  if (fenetre.length < 8 || couvre < DEGRADED_FENETRE_MS * 0.8) return etat;
   const part = fenetre.filter((f) => f.lente).length / fenetre.length;
   if (part > DEGRADED_PART_TRAMES_LENTES) {
     etat.actif = true;
@@ -113,6 +132,18 @@ export function reglages() {
   return {
     degrade: etat.actif,
     pasImage: etat.actif ? DEGRADED_FRAME_STEP : 1,
-    eau: !etat.actif,
+    // L'EAU NE DEPEND PLUS DU MODE DEGRADE. Le levier de ce mode est le
+    // DECODAGE -- une image sur deux -- et le bassin est du travail de carte
+    // graphique : un appareil qui peine a decoder ne peine pas forcement a
+    // dessiner, et on lui retirait le final du site sur une presomption qu'on
+    // ne pouvait pas verifier depuis un poste de developpement.
+    //
+    // C'est desormais le bassin lui-meme qui se retire s'il ne tient pas les
+    // trente images par seconde pendant qu'il dessine (voir main.js). Il n'y a
+    // plus a deviner : chaque appareil repond pour lui.
+    eau: forcageEau() ?? true,
+    // `?eau=1` ne dit pas seulement « pose l'eau », il dit « et ne la retire
+    // pas » : un forcage explicite vaut dans les deux sens, comme ?degraded.
+    eauForcee: forcageEau() === true,
   };
 }

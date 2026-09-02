@@ -387,11 +387,22 @@
     #porte-logo { transition: none; }
   }
 
-  /* EN HAUT A DROITE, ET PLUS EN BAS A GAUCHE : la narration occupe desormais
-     ce coin-la. Les deux ne se disputent pas la place, et l'arbitrage est
-     simple -- le temoin est fait pour etre TROUVE, la narration pour etre LUE.
-     Il descend sous le bouton du son, qui garde le coin. */
-  #temoin {
+  /* LE TEMOIN N'EST PLUS AFFICHE PENDANT LA VISITE.
+     Il disait la cadence, le jeu d'images, la taille d'anneau et le segment :
+     de quoi regler le site, rien de quoi le regarder. Un visiteur qui lit
+     « anneau 24, fenetre 12+6 » ne visite plus un immeuble, il lit un tableau
+     de bord -- et sur un site de reference, chaque chose qu'on ne comprend pas
+     est une chose qui distrait.
+
+     IL RESTE, ET IL CONTINUE DE SE METTRE A JOUR. C'est lui qui porte le
+     chiffre de la §10.9 -- la cadence sur un vrai telephone -- et les trois
+     bancs lisent son texte pour savoir quel segment est a l'ecran. On ne le
+     supprime donc pas : on le CACHE, et `?temoin=1` le redonne. Le supprimer
+     aurait coute la seule mesure qu'on ne peut pas faire sans un appareil
+     reel. */
+  #temoin { display: none; }
+  html[data-temoin] #temoin {
+    display: block;
     position: fixed; right: 20px; top: 52px; z-index: 5;
     font: 12px/1.35 ui-monospace, Menlo, monospace;
     color: var(--discret); background: rgba(0,0,0,.6);

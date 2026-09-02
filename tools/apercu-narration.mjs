@@ -35,7 +35,7 @@ const POUSSER = (n, d) => `
 const nav = await ouvrirNavigateur({ largeur: 1280, hauteur: 720 });
 mkdirSync(SORTIE, { recursive: true });
 try {
-  await nav.aller(`${BASE}/?degraded=0`);
+  await nav.aller(`${BASE}/?degraded=0&eau=1`);
   await dormir(1500);
   await nav.evaluer(`document.querySelector('[data-son="non"]').click(), true`);
   for (let a = 0; a < 40; a++) {

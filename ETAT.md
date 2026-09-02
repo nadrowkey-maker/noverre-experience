@@ -252,6 +252,59 @@ faite : la forêt monte à 19,4 kHz au seuil de 99,9 % de son énergie, donc un
 plafond à 16 kHz lui couperait du contenu réel. Inaudible pour la plupart des
 oreilles, mais c'est un arbitrage de qualité sonore et il ne se prend pas seul.
 
+## Le bandeau technique, et l'eau qui ne bougeait pas
+
+**Le bandeau est parti.** Il disait la cadence, le jeu d'images, la taille
+d'anneau et le segment : de quoi régler le site, rien de quoi le regarder. Il
+reste dans la page et continue de se mettre à jour — c'est lui qui porte la
+mesure de cadence sur un vrai téléphone (§10.9), et les trois bancs lisent son
+texte pour savoir quel segment est à l'écran. **`?temoin=1` le redonne.**
+
+**L'eau pouvait échouer sans dire un mot, de trois façons.** Aucune des trois
+n'est visible depuis un poste de développement, où tout marche toujours.
+
+*Le filtrage flottant.* `OES_texture_float_linear` était demandée et sa réponse
+jetée. Une texture flottante posée en `LINEAR` sur un appareil qui ne sait pas
+la filtrer est une texture **incomplète** : chaque lecture rend `(0,0,0,1)`,
+sans erreur, sans message. La simulation tourne, la surface reste plate, l'eau
+ne bouge pas. Elle bascule désormais au filtrage **au plus proche**, qui ne
+coûte presque rien ici — la passe de simulation ne lit que des voisins alignés
+sur le texel. Le framebuffer flottant, lui, est maintenant interrogé
+(`checkFramebufferStatus`) au lieu d'être supposé.
+
+*La perte de contexte.* Un navigateur reprend le contexte WebGL quand il veut —
+sous pression mémoire surtout, et la page en tenait un giga-octet. Sans
+écouteur, **tous les appels GL deviennent des non-opérations silencieuses** : le
+bassin croit dessiner, et comme il a pris l'écran, le canvas 2D est caché
+derrière lui. La piscine se fige ou noircit, sans une ligne dans la console.
+Elle est maintenant écoutée, `preventDefault` posé (sans lui le navigateur ne
+rend jamais le contexte), et l'écran repasse au 2D **dans la trame même**.
+
+*Le mode dégradé la coupait.* C'était une présomption : que l'appareil qui peine
+à **décoder** peine aussi à **dessiner**. Elle n'était vérifiable sur aucun banc,
+puisqu'un banc rend le GPU en logiciel — le mien mesure 75 img/s sans l'eau et
+27 avec, un chiffre qui parle du rastériseur et pas d'un iPhone. Alors on ne
+présume plus : **l'eau se pose, et se retire d'elle-même** si la cadence reste
+sous trente images par seconde pendant trois secondes *pendant qu'elle dessine*.
+Chaque appareil répond pour lui, y compris ceux qu'on n'a pas. Mesuré sur un
+téléphone bridé six fois : l'eau apparaît, tient deux secondes à 18 img/s, se
+retire, et la cadence remonte à 75 — la piscine restant peinte tout du long.
+
+## Le filet de sécurité ne pouvait pas se déclencher
+
+Trouvé en mesurant l'eau, et c'est probablement la moitié des ralentissements.
+
+Le déclencheur dynamique du mode dégradé exigeait `fenetre.length >= 60` sur une
+fenêtre de **deux secondes** — donc **trente images par seconde pour avoir le
+droit de juger**. Plus l'appareil peinait, moins il pouvait partir ; et sous
+trente images par seconde, c'est-à-dire exactement le cas qu'il existe pour
+rattraper, **il ne partait jamais**. Mesure : un téléphone bridé quatre fois
+tournait à 3 img/s et le témoin annonçait « normal ».
+
+La fenêtre se mesure maintenant en **temps** et non en nombre de trames. Le même
+téléphone bridé passe de **3 à 73 images par seconde** : le mode dégradé se
+déclenche, une image sur deux suffit, et la visite redevient fluide.
+
 ## Deux points à surveiller
 
 **`vent.mp3` fait 45 secondes**, sous le minimum de 60 à 90 du §6.5. C'était

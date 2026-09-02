@@ -54,6 +54,31 @@ export function creerBassin(canvas) {
   });
   if (!gl) return null;
 
+  // LA PERTE DE CONTEXTE, ET POURQUOI ELLE COMPTE ICI PLUS QU'AILLEURS.
+  //
+  // Un navigateur a le droit de reprendre le contexte WebGL a tout moment :
+  // sous pression memoire, quand l'onglet passe en arriere-plan, quand le
+  // pilote se reinitialise. C'est FREQUENT sur telephone, et ca l'etait
+  // d'autant plus ici que la page tenait un giga-octet.
+  //
+  // Sans ecouteur, la perte est le pire des defauts : tous les appels GL
+  // deviennent des non-operations SILENCIEUSES. Le bassin croit dessiner, il
+  // ne dessine rien -- et comme il a pris l'ecran, le canvas 2D est cache
+  // derriere lui. Resultat : la piscine se fige ou devient noire, sans une
+  // ligne dans la console.
+  //
+  // On rend donc la perte VISIBLE a l'appelant, qui reprend la main sur le
+  // canvas 2D dans la trame meme. La piscine perd ses ondes, elle ne perd pas
+  // son image. Et si le navigateur rend le contexte, on le dit aussi : tout
+  // est reconstruit et l'eau revient.
+  let perdu = false, recupere = false;
+  canvas.addEventListener('webglcontextlost', (e) => {
+    // Sans `preventDefault`, le navigateur ne restaurera JAMAIS le contexte.
+    e.preventDefault();
+    perdu = true; recupere = false;
+  }, false);
+  canvas.addEventListener('webglcontextrestored', () => { recupere = true; }, false);
+
   // On ne mange PAS l'erreur : un bassin qui echoue en silence est un bassin
   // qu'on ne saura jamais reparer. L'appelant decide s'il degrade ou non.
   const sim = creerSimulation(gl);
@@ -130,6 +155,13 @@ export function creerBassin(canvas) {
   let versU = null;
 
   return {
+    /** Le contexte a-t-il saute ? L'appelant doit repasser au canvas 2D. */
+    perdu: () => perdu,
+    /** Le navigateur l'a-t-il rendu ? L'appelant peut alors tout reconstruire. */
+    recupere: () => perdu && recupere,
+    /** Ce que l'appareil sait faire, pour le temoin. */
+    filtrage: sim.filtrage,
+
     /**
      * @param {ImageBitmap} plaque l'image de la trame
      * @param {number} u           INDEX D'IMAGE NORMALISE, 0 a 1 -- et non la
@@ -145,6 +177,9 @@ export function creerBassin(canvas) {
      * @param {boolean} [options.fausses]  fausses couleurs de recette, jamais en production
      */
     trame(plaque, u, dt, surVitesse, { force = 1, fausses = false } = {}) {
+      // Rien a tenter sur un contexte mort : ce serait dessiner dans le vide,
+      // et surtout garder l'ecran a un canvas qui ne peint plus.
+      if (perdu) return false;
       if (canvas.width !== LARGEUR) { canvas.width = LARGEUR; canvas.height = HAUTEUR; }
 
       // L'homographie a N reperes : on interpole les QUATRE POINTS entre les
@@ -237,6 +272,7 @@ export function creerBassin(canvas) {
 
       gl.bindVertexArray(vao);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      return true;
     },
 
     /** Mouvement reduit : une eau detaillee et immobile, calculee une fois. */

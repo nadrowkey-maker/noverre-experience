@@ -168,6 +168,17 @@ export async function ouvrirNavigateur({ largeur = 1280, hauteur = 720, gpu = fa
     async brider(conditions) {
       await cmd('Network.emulateNetworkConditions', conditions);
     },
+    /**
+     * Bride le processeur, en facteur de ralentissement.
+     *
+     * C'est le seul moyen de faire declencher ICI le mode degrade, qui se
+     * declenche LA-BAS : ses trois seuils sont des durees de trame, et une
+     * machine de bureau ne les atteint jamais. Sans ce bridage, on ne verrait
+     * jamais ce que voit un telephone.
+     */
+    async briderCPU(facteur) {
+      await cmd('Emulation.setCPUThrottlingRate', { rate: facteur });
+    },
     async evaluer(expression) {
       const r = await cmd('Runtime.evaluate', {
         expression, awaitPromise: true, returnByValue: true,

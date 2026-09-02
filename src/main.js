@@ -55,6 +55,14 @@ import { creerBassin } from './water/bassin.js';
 const canvas = document.getElementById('scene');
 const canvasEau = document.getElementById('eau');
 const temoin = document.getElementById('temoin');
+// Le temoin ne s'affiche plus pendant la visite : il disait la cadence, le jeu
+// d'images et la taille d'anneau, ce qui sert a REGLER le site et jamais a le
+// regarder. Il reste dans le document et continue de se mettre a jour -- c'est
+// lui qui porte la mesure de cadence sur un vrai telephone (§10.9), et les
+// bancs lisent son texte pour savoir quel segment est a l'ecran.
+if (new URLSearchParams(location.search).has('temoin')) {
+  document.documentElement.dataset.temoin = 'oui';
+}
 const bouton = document.getElementById('son');
 const motSon = document.getElementById('son-mot');
 const barres = [...document.querySelectorAll('#son .barres i')];
@@ -255,17 +263,62 @@ const narration = creerNarration(document.getElementById('narration'),
  */
 let bassin = null;
 let bassinEssaye = false;
+// Ce que le temoin dira de l'eau. Sans cette phrase, une eau qui ne bouge pas
+// sur l'appareil de quelqu'un d'autre est indiagnosticable a distance : c'est
+// exactement la situation dans laquelle on s'est trouve.
+let bassinEtat = 'pas encore atteinte';
+
+// L'EAU SE MESURE ELLE-MEME, ET C'EST ELLE QUI DECIDE DE PARTIR.
+//
+// Elle etait coupee des que le mode degrade se declenchait. Le raisonnement
+// tenait mal : le levier du mode degrade est le DECODAGE -- une image sur deux
+// -- alors que le bassin est du travail de carte graphique. Un telephone qui
+// peine a decoder n'est pas forcement un telephone qui peine a dessiner, et on
+// lui retirait le final du site sur une presomption.
+//
+// Et la presomption ne pouvait pas etre verifiee d'ici : le banc rend le GPU en
+// logiciel, sur le processeur, qu'on bride ensuite. Il mesure 75 img/s sans
+// l'eau et 27 avec -- un chiffre qui parle du banc, pas d'un iPhone.
+//
+// Alors on ne presume plus, on regarde. L'eau se pose, et si la cadence reste
+// sous le plancher de trente images par seconde PENDANT QU'ELLE DESSINE, elle
+// se retire d'elle-meme et rend l'ecran au canvas 2D. Chaque appareil repond
+// pour lui, y compris ceux qu'on n'a pas. Trois secondes, et non une : entrer
+// dans la piscine coute un fondu et des decodages, et un creux d'une seconde
+// la ne veut rien dire.
+const PLANCHER_EAU = 30, SECONDES_LENTES_AVANT_ABANDON = 3;
+let bassinAbandonne = false, bassinADessine = false, secondesLentesEau = 0;
 function bassinPour() {
+  // LE CONTEXTE PEUT SAUTER EN COURS DE VISITE, et sur telephone c'est
+  // courant. On le reprend s'il revient, on rend la main au canvas 2D sinon.
+  if (bassin && bassin.perdu()) {
+    if (bassin.recupere()) {
+      bassin = null; bassinEssaye = false;
+      bassinEtat = 'contexte rendu, bassin reconstruit';
+    } else {
+      bassinEtat = 'contexte WebGL perdu, repli 2D';
+      return null;
+    }
+  }
+  if (bassinAbandonne) return null;
   if (bassinEssaye) return bassin;
   bassinEssaye = true;
-  if (!cfg.eau) return null;
+  if (!cfg.eau) { bassinEtat = 'coupee a la main (?eau=0)'; return null; }
+  // `?eau=1` bloque aussi le retrait automatique. Sans cela les bancs, qui
+  // rendent le GPU en LOGICIEL, se retirent l'eau tout seuls -- ils tournent a
+  // 17 img/s sur la piscine meme sans bridage, ce qui parle du rasteriseur et
+  // pas du site. C'est le meme esprit que `?degraded=0` : un forcage explicite
+  // vaut dans les deux sens.
+  if (cfg.eauForcee) bassinAbandonne = false;
   try {
     bassin = creerBassin(canvasEau);
+    bassinEtat = bassin ? `eau, filtrage ${bassin.filtrage}` : 'WebGL2 absent, repli 2D';
   } catch (e) {
     // Le bassin est le seul ecran WebGL de la page. S'il ne se cree pas, on
     // continue en 2D : la piscine reste une belle image, ce qui est exactement
     // la version degradee voulue.
     console.warn('bassin indisponible, repli sur le rendu 2D : ' + e.message);
+    bassinEtat = `repli 2D — ${e.message}`;
     bassin = null;
   }
   return bassin;
@@ -290,6 +343,20 @@ function compterTrame(maintenant) {
   if (!fpsDepuis) { fpsDepuis = maintenant; return false; }
   if (maintenant - fpsDepuis < 500) return false;
   fps = (fpsTrames * 1000) / (maintenant - fpsDepuis);
+
+  // Le verdict de l'eau. On ne compte que les fenetres ou elle a REELLEMENT
+  // dessine : partout ailleurs la cadence ne dit rien d'elle.
+  if (bassinADessine && maintenant > 4000) {
+    secondesLentesEau = fps < PLANCHER_EAU ? secondesLentesEau + 1 : 0;
+    if (secondesLentesEau >= SECONDES_LENTES_AVANT_ABANDON
+        && !bassinAbandonne && !cfg.eauForcee) {
+      bassinAbandonne = true;
+      bassinEtat = `retiree : moins de ${PLANCHER_EAU} img/s pendant ${SECONDES_LENTES_AVANT_ABANDON} s`;
+    }
+  } else {
+    secondesLentesEau = 0;
+  }
+  bassinADessine = false;
   // Les toutes premieres secondes ne comptent pas dans le pire creux : une page
   // qui demarre est toujours irreguliere, et l'y inclure ferait mentir le
   // chiffre dans le sens pessimiste.
@@ -312,9 +379,12 @@ function afficherTemoin(seq, index = 0) {
   const cadence = fps
     ? `${fps.toFixed(0)} img/s (creux ${Number.isFinite(fpsMin) ? fpsMin.toFixed(0) : '—'}) — `
     : '';
+  // L'etat de l'eau ne s'affiche que sur la piscine : ailleurs il ne veut rien
+  // dire, et le temoin doit rester lisible sur un ecran de telephone.
+  const eau = s?.eau ? ` — ${bassinEtat}` : '';
   temoin.textContent = estDegrade()
-    ? `${cadence}degrade ${jeu}px — ${raisonDegrade()} — 1/${cfg.pasImage}, ${detail} — ${s ? s.id : ''}`
-    : `${cadence}normal ${jeu}px — ${detail} — ${s ? s.id : ''}`;
+    ? `${cadence}degrade ${jeu}px — ${raisonDegrade()} — 1/${cfg.pasImage}, ${detail}${eau} — ${s ? s.id : ''}`
+    : `${cadence}normal ${jeu}px — ${detail}${eau} — ${s ? s.id : ''}`;
   temoin.dataset.degrade = String(estDegrade());
   temoin.dataset.bas = String(fps > 0 && fps < 30);
 }
@@ -527,9 +597,13 @@ async function modeParcours() {
         const force = Math.min((t - partFondu) / EVEIL_BASSIN, 1);
         // On passe l'index d'image normalise, PAS la progression du defilement :
         // les reperes de calage sont poses sur des images.
-        b.trame(bmp, indexNormalise(seq, t), dt, (v) => eauSuivre(index, v), { force });
-        rendu.reglerLuminosite(1);
-        rendupParBassin = true;
+        // On CROIT LA VALEUR DE RETOUR plutot que de supposer que ca a marche :
+        // si le contexte a saute pendant cette trame meme, le bassin le dit et
+        // le canvas 2D reprend la main tout de suite, dans la meme trame.
+        rendupParBassin = b.trame(bmp, indexNormalise(seq, t), dt,
+                                  (v) => eauSuivre(index, v), { force }) !== false;
+        if (rendupParBassin) { rendu.reglerLuminosite(1); bassinADessine = true; }
+        else derniereImage = null;   // le canvas 2D doit se repeindre
       }
     }
     if (!rendupParBassin) {

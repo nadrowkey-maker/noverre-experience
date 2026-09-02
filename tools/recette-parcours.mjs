@@ -79,7 +79,7 @@ try {
   // degrade avant d'atteindre la piscine -- c'est le mecanisme qui fonctionne,
   // mais `cfg.eau` passe alors a faux et le bassin ne se cree jamais. On ne
   // pourrait plus le tester. Le mode degrade a son propre controle, plus bas.
-  await nav.aller(`${BASE}/?degraded=0`);
+  await nav.aller(`${BASE}/?degraded=0&eau=1`);
   await dormir(1500);
 
   // ON ENTRE PAR LA PORTE, et EN SILENCE. Le defilement n'est rendu qu'a la fin
@@ -327,18 +327,36 @@ try {
        `luminance ${m.luminance.toFixed(1)}`);
     await nav.photo(`${SORTIE}/degrade.png`);
 
-    // Le bassin ne doit PAS se creer : c'est le premier poste a sacrifier sur un
-    // appareil qui peine, et la piscine y reste une belle image fixe.
+    // LE BASSIN N'EST PLUS COUPE PAR LE MODE DEGRADE, il se retire tout seul.
+    //
+    // L'ancienne regle -- « aucun bassin WebGL en mode degrade » -- reposait sur
+    // une presomption : que l'appareil qui peine a DECODER peine aussi a
+    // DESSINER. Elle n'etait verifiable sur aucun banc, parce qu'un banc rend le
+    // GPU en logiciel. Elle retirait donc le final du site a des appareils dont
+    // on ne savait rien.
+    //
+    // Ce qui se verifie, en revanche, c'est la COHERENCE : le temoin dit ce que
+    // l'eau fait, et le canvas a l'ecran doit le confirmer. Sous rasteriseur
+    // logiciel la piscine ne tient pas trente images par seconde, donc l'eau se
+    // retire ici -- et c'est la ce banc mesure : que le retrait rende bien
+    // l'ecran au canvas 2D, sans le laisser noir.
     let atteint = false;
     for (let etape = 0; etape < 300 && !atteint; etape++) {
       await nav.evaluer(POUSSER(4, 150));
       const e = await nav.evaluer(ETAT);
       if (e.segment === '13-piscine') {
         await nav.evaluer(POUSSER(6, 150));
+        // Le retrait se prononce sur trois secondes de cadence : on les laisse
+        // passer avant de juger, sinon on lit un etat de transition.
+        await dormir(4500);
         const f = await nav.evaluer(ETAT);
-        ok(f.canvas === 'scene', 'aucun bassin WebGL en mode degrade', f.canvas);
+        const t2 = await nav.evaluer(`document.getElementById('temoin').textContent`);
+        const retiree = /retiree/.test(t2);
+        ok(retiree ? f.canvas === 'scene' : f.canvas === 'eau',
+           'le temoin et l\'ecran disent la meme chose sur l\'eau',
+           `${retiree ? 'retiree' : 'posee'}, canvas ${f.canvas}`);
         const mm = await nav.mesurerZone(ZONE);
-        ok(mm.luminance > 2, 'et la piscine reste peinte en 2D',
+        ok(mm.luminance > 2, 'et la piscine reste PEINTE quoi qu\'il arrive',
            `luminance ${mm.luminance.toFixed(1)}`);
         await nav.photo(`${SORTIE}/degrade-piscine.png`);
         atteint = true;
