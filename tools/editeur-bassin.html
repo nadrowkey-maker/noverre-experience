@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Editeur du bassin — Noverre</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#0b0b0c; color:#ece9e4;
+         font:13px/1.5 ui-monospace, Menlo, monospace; padding:12px; }
+  h1 { font-size:12px; color:#9ad; margin:0 0 8px; letter-spacing:.08em; }
+  .cmd { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:8px 0; }
+  input[type=range] { flex:1; min-width:220px; }
+  button { font:inherit; padding:6px 11px; background:#1d1d1d; color:#ece9e4;
+           border:1px solid #444; border-radius:5px; cursor:pointer; }
+  button[aria-pressed="true"] { background:#2a4055; border-color:#5a8; }
+  button.danger { border-color:#733; }
+  button.mini { padding:2px 7px; font-size:12px; }
+  .zone { position:relative; }
+  canvas#c { width:100%; height:auto; display:block; border-radius:4px;
+             background:#000; cursor:crosshair; }
+  #loupe { position:absolute; width:180px; height:180px; border-radius:50%;
+           border:1px solid #666; pointer-events:none; display:none;
+           image-rendering:pixelated; z-index:5; box-shadow:0 4px 24px #000; }
+  #sortie { width:100%; height:190px; margin-top:10px; background:#08080a;
+            color:#cfc; border:1px solid #333; border-radius:5px; padding:9px;
+            font:12px/1.45 ui-monospace, Menlo, monospace; }
+  .aide { color:#8a8a86; }
+  b { color:#ece9e4; }
+  table.reperes { border-collapse:collapse; margin:4px 0 8px; }
+  table.reperes td { padding:2px 10px 2px 0; white-space:nowrap; }
+  table.reperes tr.actif td { color:#ffd24a; }
+  .drapeau { color:#e87; }
+</style>
+</head>
+<body>
+<h1>EDITEUR DU BASSIN — reperes de l'homographie et masque des occultants</h1>
+
+<div class="cmd">
+  <label>image <b id="n">1</b>/<span id="nmax">133</span></label>
+  <input type="range" id="curseur" min="1" max="133" value="1">
+  <button id="mode-coins" aria-pressed="true">1. Coins</button>
+  <button id="mode-masque" aria-pressed="false">2. Masque</button>
+  <button id="fausses" aria-pressed="false">fausses couleurs</button>
+</div>
+
+<div class="cmd" id="barre-coins">
+  <button id="ajouter">+ ajouter un repere a l'image courante</button>
+  <span class="aide">glisse les quatre points jaunes. Le dernier point touche
+    passe en BLANC : les fleches du clavier le deplacent alors d'un pixel,
+    dix avec Maj.</span>
+</div>
+<div class="cmd" id="alerte-repere" hidden>
+  <b class="drapeau" id="alerte-texte"></b>
+  <button id="aller-repere" class="mini">aller a l'image du repere</button>
+</div>
+<table class="reperes" id="table-reperes"></table>
+
+<div class="cmd" id="barre-masque" hidden>
+  <button id="nouveau">nouveau polygone</button>
+  <button id="fermer">fermer (ou double-clic)</button>
+  <button id="annuler-pt">annuler le dernier point</button>
+  <button id="suppr" class="danger">supprimer le polygone sous le curseur</button>
+  <button id="caler-fin" aria-pressed="false">caler sur la derniere image</button>
+  <span class="aide">ne detoure que ce qui TRAVERSE la ligne d'eau.</span>
+</div>
+<div class="cmd" id="etat-masque" hidden>
+  <b id="compte">0 polygone enregistre</b>
+  <span class="aide" id="encours-info"></span>
+</div>
+
+<div class="zone">
+  <canvas id="c" width="1280" height="720"></canvas>
+  <canvas id="loupe" width="180" height="180"></canvas>
+</div>
+
+<div class="cmd">
+  <button id="exporter">exporter la configuration</button>
+  <button id="reinit" class="danger">tout reinitialiser</button>
+  <span class="aide">le travail est garde dans le navigateur, tu peux recharger sans rien perdre.</span>
+</div>
+<textarea id="sortie" readonly placeholder="La configuration a coller dans src/config/bassin.js apparaitra ici."></textarea>
+
+<script type="module">
+// L'outil importe le VRAI module de production. S'il se trompe, l'outil se
+// trompe de la meme facon, et le calage reste juste. Une reimplantation du
+// calcul dans l'outil donnerait un calage qui ne vaut que dans l'outil.
+import { carreVers, versUniteN } from '/src/water/homographie.js';
+
+const SEQUENCE = '13-piscine';
+const N = 133;                       // images de la sequence
+const L = 1280, H = 720;
+
+document.getElementById('nmax').textContent = N;
+document.getElementById('curseur').max = N;
+
+// Les coins releves A L'OEIL, et non par la mesure automatique.
+//
+// Une mesure de la marche de luminance pierre/eau avait ete essayee : elle
+// tombe a moins d'un pixel de cette marche, mais la marche n'est pas forcement
+// la ligne d'eau. Au crepuscule le contraste s'inverse -- l'eau devient plus
+// claire que la margelle -- et la mesure suit alors une frontiere qui n'est
+// plus la bonne. Sur la derniere image, elle plaçait le bord haut SUR la
+// margelle, et l'eau simulee debordait visiblement du bassin.
+//
+// Ces deux jeux-ci sont les releves manuels, et ils font autorite.
+// Le bassin est entierement dans le cadre, contrairement a celui de Parkside
+// dont deux coins touchaient les bords.
+const DEFAUT = {
+  reperes: [
+    { t: 0, coins: { HG:[195,457], HD:[772,333], BD:[1062,365], BG:[565,588] } },
+    { t: 1, coins: { HG:[214,450], HD:[767,346], BD:[1040,371], BG:[570,563] } },
+  ],
+  masque: [],
+  // Le decalage du masque sur la DERNIERE image, en pixels : les occultants
+  // suivent la derive de la camera, on ne les retrace pas, on les translate.
+  masqueFin: [0, 0],
+};
+// La cle porte un NUMERO, et il monte quand DEFAUT change.
+//
+// Sans cela, l'etat garde dans le navigateur masque silencieusement les
+// nouvelles valeurs de depart : on rouvre l'outil en croyant repartir du
+// calage a jour, et l'on repart en fait de l'ancien. C'est arrive.
+const CLE = 'noverre-bassin-2';
+let d = JSON.parse(localStorage.getItem(CLE) || 'null') || structuredClone(DEFAUT);
+const garder = () => localStorage.setItem(CLE, JSON.stringify(d));
+
+const c = document.getElementById('c'), ctx = c.getContext('2d');
+const loupe = document.getElementById('loupe'), lctx = loupe.getContext('2d');
+const curseur = document.getElementById('curseur');
+const sortie = document.getElementById('sortie');
+let mode = 'coins';
+let edite = 0;               // index du repere en cours d'edition
+let fausses = false;
+let calage = false;          // on glisse le masque en bloc
+let glisse = null;
+let enCours = null;
+// Deux notions distinctes, et les confondre empeche de lacher un point :
+// `attrape` ne vit que le temps du glisser et se vide au relachement ;
+// `selection` survit, pour que les fleches du clavier aient une cible.
+let attrape = null;          // coin actuellement tenu a la souris
+let selection = null;        // dernier coin designe, cible des fleches
+let souris = null;
+
+const images = new Map();
+const img = (i) => {
+  if (!images.has(i)) {
+    const im = new Image();
+    im.src = `/frames/webp-1280/${SEQUENCE}/${String(i).padStart(4,'0')}.webp`;
+    im.onload = dessiner;
+    images.set(i, im);
+  }
+  return images.get(i);
+};
+
+/** L'index d'image d'un repere, et reciproquement. */
+const imageDe = (t) => Math.round(t * (N - 1)) + 1;
+const tDe = (i) => (i - 1) / (N - 1);
+
+/**
+ * Coordonnees image a partir d'un evenement souris.
+ *
+ * Le canvas est affiche en `width: 100%` : sans le facteur d'echelle, chaque
+ * point serait pose a cote. Quelques pixels d'erreur sur un coin donnent un
+ * decalage visible sur le bord oppose, parce que la perspective amplifie.
+ */
+function pos(e) {
+  const r = c.getBoundingClientRect();
+  return [ (e.clientX - r.left) * (c.width / r.width),
+           (e.clientY - r.top)  * (c.height / r.height) ];
+}
+
+/** Les coins interpoles a l'image i, par la meme regle que `versUniteN`. */
+function coinsA(i) {
+  const t = tDe(i), r = d.reperes;
+  if (r.length === 1) return r[0].coins;
+  let k = 1;
+  while (k < r.length - 1 && t > r[k].t) k++;
+  const a = r[k-1], b = r[k];
+  const den = b.t - a.t;
+  const u = den === 0 ? 0 : Math.min(Math.max((t - a.t) / den, 0), 1);
+  const o = {};
+  for (const nom of ['HG','HD','BD','BG']) {
+    const p = a.coins[nom], q = b.coins[nom];
+    o[nom] = [ p[0] + (q[0]-p[0])*u, p[1] + (q[1]-p[1])*u ];
+  }
+  return o;
+}
+
+/** Decalage du masque a l'image i : nul au debut, `masqueFin` a la fin. */
+function decalageA(i) {
+  const t = tDe(i);
+  return [d.masqueFin[0] * t, d.masqueFin[1] * t];
+}
+
+function dessiner() {
+  const i = +curseur.value;
+  document.getElementById('n').textContent = i;
+  const im = img(i);
+  ctx.clearRect(0, 0, L, H);
+  if (im.complete) ctx.drawImage(im, 0, 0, L, H);
+
+  // En mode coins on montre le repere EDITE, pas l'interpole : sinon on croit
+  // deplacer un point et l'on en regarde un autre.
+  const q = (mode === 'coins' && d.reperes[edite]) ? d.reperes[edite].coins : coinsA(i);
+
+  if (fausses) voileFausses(q);
+
+  const pts = [q.HG, q.HD, q.BD, q.BG];
+  ctx.beginPath(); ctx.moveTo(...pts[0]);
+  for (const p of pts.slice(1)) ctx.lineTo(...p);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255,0,255,.12)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,0,255,.95)'; ctx.lineWidth = 1.5; ctx.stroke();
+
+  grille(q);
+
+  if (mode === 'coins') {
+    for (const [k,p] of Object.entries(q)) {
+      ctx.beginPath(); ctx.arc(p[0], p[1], 7, 0, 7);
+      ctx.fillStyle = 'rgba(255,255,0,.25)'; ctx.fill();
+      ctx.strokeStyle = selection === k ? '#fff' : '#ff0'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = '#ff0';
+      ctx.fillText(`${k} ${p[0].toFixed(0)},${p[1].toFixed(0)}`, p[0]+11, p[1]-11);
+    }
+  }
+
+  const [ox, oy] = calage ? d.masqueFin : decalageA(i);
+  for (const [k, poly] of d.masque.entries()) {
+    const dep = poly.map(([x, y]) => [x + ox, y + oy]);
+    tracerPoly(dep, 'rgba(0,255,120,.30)', 'rgba(0,255,120,.95)');
+    const cx = dep.reduce((a,p)=>a+p[0],0)/dep.length;
+    const cy = dep.reduce((a,p)=>a+p[1],0)/dep.length;
+    ctx.fillStyle = 'rgba(0,255,120,.95)';
+    ctx.fillText(String(k+1), cx-3, cy+4);
+  }
+  if (enCours) tracerPoly(enCours, 'rgba(255,180,0,.25)', 'rgba(255,180,0,.95)', true);
+
+  const n = d.masque.length;
+  document.getElementById('compte').textContent =
+    n === 0 ? 'AUCUN polygone enregistre' : `${n} polygone${n>1?'s':''} enregistre${n>1?'s':''}`;
+  document.getElementById('encours-info').textContent =
+    calage ? `glisse le masque en bloc — decalage ${d.masqueFin[0]}, ${d.masqueFin[1]} px`
+    : enCours ? `polygone en cours : ${enCours.length} point${enCours.length>1?'s':''} — Entree ou double-clic pour fermer`
+            : "clique dans l'image pour commencer un polygone";
+  majTable();
+  majAlerte();
+}
+
+/**
+ * La grille du carre unite, tracee a travers la VRAIE homographie.
+ *
+ * C'est elle qui juge le calage, pas le quadrilatere : le quadrilatere passe
+ * toujours par les quatre points qu'on vient de poser, donc il a toujours
+ * l'air juste. La grille, elle, montre si l'interieur suit le carrelage.
+ */
+function grille(q) {
+  const m = carreVers([q.HG[0]/L, q.HG[1]/H], [q.HD[0]/L, q.HD[1]/H],
+                      [q.BD[0]/L, q.BD[1]/H], [q.BG[0]/L, q.BG[1]/H]);
+  const proj = (u, v) => {
+    const [a,dd,g,b,e,h,cc,f,ii] = m;
+    const w = g*u + h*v + ii;
+    return [(a*u + b*v + cc)/w * L, (dd*u + e*v + f)/w * H];
+  };
+  ctx.strokeStyle = 'rgba(0,255,255,.45)'; ctx.lineWidth = 1;
+  for (let k = 1; k <= 3; k++) {
+    const s = k / 4;
+    ctx.beginPath(); ctx.moveTo(...proj(0, s)); ctx.lineTo(...proj(1, s)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(...proj(s, 0)); ctx.lineTo(...proj(s, 1)); ctx.stroke();
+  }
+}
+
+/**
+ * Fausses couleurs : hors du quadrilatere on assombrit, dedans on teinte selon
+ * la coordonnee du carre unite. C'est le seul moyen de voir d'un coup d'oeil si
+ * le quadrilatere colle vraiment a l'eau et si le masque tombe bien.
+ *
+ * On passe par `versUniteN` -- le vrai code -- et non par une reimplantation.
+ */
+function voileFausses(q) {
+  const m = versUniteN([{ t: 0, coins: q }], 0, L, H);
+  const [a,dd,g,b,e,h,cc,f,ii] = m;
+  const im = ctx.getImageData(0, 0, L, H);
+  const px = im.data;
+  for (let y = 0; y < H; y += 1) {
+    for (let x = 0; x < L; x += 1) {
+      const u = (x + 0.5) / L, v = (y + 0.5) / H;
+      const w = g*u + h*v + ii;
+      const su = (a*u + b*v + cc) / w, sv = (dd*u + e*v + f) / w;
+      const o = (y * L + x) * 4;
+      if (su < 0 || su > 1 || sv < 0 || sv > 1) {
+        px[o] *= 0.35; px[o+1] *= 0.35; px[o+2] *= 0.35;
+      } else {
+        // Un damier du carre unite : s'il ne suit pas le carrelage, le calage
+        // est faux, et cela se voit sans avoir a le mesurer.
+        const damier = ((Math.floor(su * 8) + Math.floor(sv * 8)) & 1) ? 1.25 : 0.8;
+        px[o]   = Math.min(255, px[o]   * damier);
+        px[o+1] = Math.min(255, px[o+1] * damier * 0.9);
+        px[o+2] = Math.min(255, px[o+2] * damier * 1.1);
+      }
+    }
+  }
+  ctx.putImageData(im, 0, 0);
+}
+
+function tracerPoly(p, remplissage, trait, ouvert) {
+  if (p.length < 2) { if (p.length === 1) marque(p[0], trait); return; }
+  ctx.beginPath(); ctx.moveTo(...p[0]);
+  for (const q of p.slice(1)) ctx.lineTo(...q);
+  if (!ouvert) ctx.closePath();
+  ctx.fillStyle = remplissage; if (!ouvert) ctx.fill();
+  ctx.strokeStyle = trait; ctx.lineWidth = 1.5; ctx.stroke();
+  if (ouvert) for (const q of p) marque(q, trait);
+}
+function marque(p, couleur) {
+  ctx.beginPath(); ctx.arc(p[0], p[1], 3, 0, 7);
+  ctx.fillStyle = couleur; ctx.fill();
+}
+
+function dedans(poly, x, y) {
+  let ok = false;
+  for (let i = 0, j = poly.length-1; i < poly.length; j = i++) {
+    const [xi,yi] = poly[i], [xj,yj] = poly[j];
+    if ((yi > y) !== (yj > y) && x < (xj-xi)*(y-yi)/(yj-yi)+xi) ok = !ok;
+  }
+  return ok;
+}
+
+/**
+ * L'alerte de decalage : on edite un repere en regardant une AUTRE image.
+ *
+ * C'est l'erreur qui a coute un tour complet. Deux relevés ont ete faits en
+ * editant le repere 0 -- l'un sur la premiere image, l'autre sur la derniere --
+ * et ils sont sortis tous les deux dans le champ `t: 0.000` de l'export. Rien
+ * dans l'outil ne disait que le second decrivait la fin du plan.
+ *
+ * Editer un repere sur une autre image que la sienne est parfois legitime, donc
+ * on n'INTERDIT pas : on le dit franchement, et on propose d'y aller.
+ */
+function majAlerte() {
+  const boite = document.getElementById('alerte-repere');
+  const r = d.reperes[edite];
+  if (mode !== 'coins' || !r) { boite.hidden = true; return; }
+  const attendue = imageDe(r.t);
+  const courante = +curseur.value;
+  const ecart = Math.abs(courante - attendue);
+  boite.hidden = ecart <= 2;
+  if (!boite.hidden) {
+    document.getElementById('alerte-texte').textContent =
+      `tu edites le repere t = ${r.t.toFixed(3)} (image ${attendue}) `
+      + `mais tu regardes l'image ${courante}. Les points que tu poses ici `
+      + `decriront le bassin a l'image ${attendue}, pas a celle-ci.`;
+  }
+}
+document.getElementById('aller-repere').onclick = () => {
+  curseur.value = imageDe(d.reperes[edite].t);
+  dessiner();
+};
+
+// --- la table des reperes ---------------------------------------------------
+function majTable() {
+  const t = document.getElementById('table-reperes');
+  if (mode !== 'coins') { t.innerHTML = ''; return; }
+  t.innerHTML = '';
+  d.reperes.forEach((r, k) => {
+    const tr = document.createElement('tr');
+    if (k === edite) tr.className = 'actif';
+    const suppr = d.reperes.length > 1
+      ? `<button class="mini danger" data-suppr="${k}">supprimer</button>` : '';
+    tr.innerHTML =
+      `<td>t = ${r.t.toFixed(3)}</td>` +
+      `<td>image ${imageDe(r.t)}</td>` +
+      `<td><button class="mini" data-edit="${k}">${k === edite ? 'en edition' : 'editer'}</button></td>` +
+      `<td>${suppr}</td>`;
+    t.appendChild(tr);
+  });
+  t.querySelectorAll('[data-edit]').forEach((b) => {
+    b.onclick = () => {
+      edite = +b.dataset.edit;
+      // On saute a l'image du repere : editer les coins d'un repere en
+      // regardant une autre image n'aurait aucun sens.
+      curseur.value = imageDe(d.reperes[edite].t);
+      dessiner();
+    };
+  });
+  t.querySelectorAll('[data-suppr]').forEach((b) => {
+    b.onclick = () => {
+      const k = +b.dataset.suppr;
+      d.reperes.splice(k, 1);
+      if (edite >= d.reperes.length) edite = d.reperes.length - 1;
+      garder(); dessiner();
+    };
+  });
+}
+
+document.getElementById('ajouter').onclick = () => {
+  const t = tDe(+curseur.value);
+  if (d.reperes.some((r) => Math.abs(r.t - t) < 1e-6)) {
+    alert('Un repere existe deja a cette image.'); return;
+  }
+  // Le nouveau repere part de la position INTERPOLEE : il occupe donc d'abord
+  // exactement la place qu'il aurait sans lui, et l'on ne corrige que la
+  // derive. Le poser sur les coins du premier repere obligerait a tout
+  // recaler a la main.
+  const coins = coinsA(+curseur.value);
+  const arrondi = {};
+  for (const nom of ['HG','HD','BD','BG'])
+    arrondi[nom] = [Math.round(coins[nom][0]), Math.round(coins[nom][1])];
+  d.reperes.push({ t, coins: arrondi });
+  d.reperes.sort((a, b) => a.t - b.t);          // versUniteN suppose l'ordre
+  edite = d.reperes.findIndex((r) => Math.abs(r.t - t) < 1e-6);
+  garder(); dessiner();
+};
+
+// --- la loupe ---------------------------------------------------------------
+function majLoupe(e) {
+  if (!souris) { loupe.style.display = 'none'; return; }
+  const r = c.getBoundingClientRect();
+  loupe.style.display = 'block';
+  loupe.style.left = `${e.clientX - r.left + 22}px`;
+  loupe.style.top  = `${e.clientY - r.top - 200}px`;
+  const im = img(+curseur.value);
+  if (!im.complete) return;
+  const Z = 6, S = 180 / Z;
+  lctx.imageSmoothingEnabled = false;
+  lctx.clearRect(0,0,180,180);
+  lctx.drawImage(im, souris[0]-S/2, souris[1]-S/2, S, S, 0, 0, 180, 180);
+  lctx.strokeStyle = 'rgba(255,255,0,.9)'; lctx.lineWidth = 1;
+  lctx.beginPath(); lctx.moveTo(90,80); lctx.lineTo(90,100);
+  lctx.moveTo(80,90); lctx.lineTo(100,90); lctx.stroke();
+}
+
+c.addEventListener('pointermove', (e) => {
+  souris = pos(e);
+  if (attrape && d.reperes[edite]) {
+    d.reperes[edite].coins[attrape] = [Math.round(souris[0]), Math.round(souris[1])];
+    garder();
+  }
+  if (glisse) {
+    d.masqueFin = [Math.round(souris[0] - glisse[0]), Math.round(souris[1] - glisse[1])];
+    garder();
+  }
+  majLoupe(e); dessiner();
+});
+c.addEventListener('pointerleave', () => { souris = null; loupe.style.display='none'; });
+
+c.addEventListener('pointerdown', (e) => {
+  const [x,y] = pos(e);
+  if (calage) { glisse = [x - d.masqueFin[0], y - d.masqueFin[1]]; return; }
+  if (mode === 'coins') {
+    const q = d.reperes[edite]?.coins; if (!q) return;
+    for (const [k,p] of Object.entries(q))
+      if (Math.hypot(p[0]-x, p[1]-y) < 14) { attrape = selection = k; dessiner(); return; }
+    return;
+  }
+  if (!enCours) enCours = [];
+  enCours.push([Math.round(x), Math.round(y)]);
+  dessiner();
+});
+addEventListener('pointerup', () => { attrape = null; glisse = null; });
+c.addEventListener('dblclick', () => { if (mode === 'masque') fermerPoly(); });
+
+function fermerPoly() {
+  if (enCours && enCours.length >= 3) d.masque.push(enCours);
+  enCours = null; garder(); dessiner();
+}
+
+// --- commandes --------------------------------------------------------------
+const bC = document.getElementById('mode-coins'), bM = document.getElementById('mode-masque');
+function setMode(m) {
+  mode = m; enCours = null; attrape = selection = null;
+  bC.setAttribute('aria-pressed', String(m==='coins'));
+  bM.setAttribute('aria-pressed', String(m==='masque'));
+  document.getElementById('barre-coins').hidden = m !== 'coins';
+  document.getElementById('barre-masque').hidden = m !== 'masque';
+  document.getElementById('etat-masque').hidden = m !== 'masque';
+  dessiner();
+}
+bC.onclick = () => setMode('coins');
+bM.onclick = () => setMode('masque');
+
+const bF = document.getElementById('fausses');
+bF.onclick = () => { fausses = !fausses; bF.setAttribute('aria-pressed', String(fausses)); dessiner(); };
+
+document.getElementById('nouveau').onclick = () => {
+  // On FERME le polygone en cours au lieu de le jeter : c'est ce qui faisait
+  // perdre un detourage sans le dire, et l'export sortait une liste vide.
+  fermerPoly(); enCours = []; dessiner();
+};
+document.getElementById('fermer').onclick = fermerPoly;
+document.getElementById('annuler-pt').onclick = () => { enCours?.pop(); dessiner(); };
+document.getElementById('suppr').onclick = () => {
+  if (!souris) return;
+  const i = d.masque.findIndex((p) => dedans(p, souris[0], souris[1]));
+  if (i >= 0) { d.masque.splice(i,1); garder(); dessiner(); }
+};
+const bCal = document.getElementById('caler-fin');
+bCal.onclick = () => {
+  calage = !calage;
+  bCal.setAttribute('aria-pressed', String(calage));
+  if (calage) curseur.value = N;
+  dessiner();
+};
+
+document.getElementById('reinit').onclick = () => {
+  if (!confirm('Tout remettre aux valeurs de depart ?')) return;
+  d = structuredClone(DEFAUT); edite = 0; garder(); dessiner();
+};
+curseur.addEventListener('input', () => { attrape = null; dessiner(); });
+
+addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && mode === 'masque') fermerPoly();
+  if (e.key === 'Escape') { enCours = null; attrape = selection = null; dessiner(); }
+  // Les fleches deplacent le point attrape d'un pixel : la souris ne descend
+  // pas sous le pixel une fois le canvas mis a l'echelle.
+  if (mode === 'coins' && selection && d.reperes[edite]) {
+    const p = d.reperes[edite].coins[selection];
+    const pas = e.shiftKey ? 10 : 1;
+    if (e.key === 'ArrowLeft')  { p[0] -= pas; e.preventDefault(); }
+    else if (e.key === 'ArrowRight') { p[0] += pas; e.preventDefault(); }
+    else if (e.key === 'ArrowUp')    { p[1] -= pas; e.preventDefault(); }
+    else if (e.key === 'ArrowDown')  { p[1] += pas; e.preventDefault(); }
+    else return;
+    garder(); dessiner();
+  }
+});
+
+document.getElementById('exporter').onclick = () => {
+  // Un polygone encore ouvert n'etait PAS exporte : il vivait dans `enCours` et
+  // l'export ne lisait que `d.masque`. On le ferme d'abord.
+  if (enCours && enCours.length >= 3) fermerPoly();
+  const r = [...d.reperes].sort((a, b) => a.t - b.t);   // versUniteN le suppose
+  // L'export sort TOUS les reperes, avec leur `t`. Il ne sort pas « le repere
+  // qu'on vient d'editer » : deux exports successifs decrivant chacun un bout
+  // du plan, mais tous deux ecrits en t = 0, ont deja fait poser le calage de
+  // fin a la place de celui de debut.
+  const p = (o) => `{ HG: [${o.HG}], HD: [${o.HD}], BD: [${o.BD}], BG: [${o.BG}] }`;
+  sortie.value =
+`// Releve dans tools/editeur-bassin.html, sur la sequence ${SEQUENCE}.
+// Le bassin DERIVE pendant le plan : les coins sont releves a plusieurs
+// reperes et le code interpole les QUATRE POINTS entre eux, jamais la matrice.
+// Le \`t\` d'un repere est l'index d'image normalise, (index - 1) / (n - 1).
+export const BASSIN_REPERES = [
+${r.map((x) => `  { t: ${x.t.toFixed(3)}, coins: ${p(x.coins)} },`).join('\n')}
+];
+
+// Les occultants : ce qui est DEVANT la surface et doit etre redessine
+// par-dessus l'eau, en echantillonnant l'image COURANTE et non une image figee,
+// sinon leur lumiere cesserait de suivre la tombee du jour.
+// Ne detourer que ce qui TRAVERSE la ligne d'eau : ce qui est entierement
+// sous elle n'a pas besoin de masque, l'eau n'etant jamais dessinee hors du
+// quadrilatere.
+export const BASSIN_OCCULTANTS = [
+${d.masque.map((poly) => '  [' + poly.map((q) => `[${q}]`).join(', ') + '],').join('\n')}
+];
+export const BASSIN_OCCULTANTS_FIN = [${d.masqueFin}];`;
+  sortie.select();
+  if (d.masque.length === 0) {
+    console.warn('Aucun occultant enregistre. Verifie qu\'aucun objet ne traverse la ligne d\'eau.');
+  }
+};
+
+setMode('coins');
+dessiner();
+</script>
+</body>
+</html>

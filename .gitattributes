@@ -1,0 +1,17 @@
+# Le depot est ecrit sous Windows et deploye sous Linux. Sans ces regles, git
+# convertit les fins de ligne en CRLF a l'extraction, et un script shell en
+# CRLF echoue sur Linux avec une erreur d'interpreteur introuvable.
+*.sh   text eol=lf
+*.mjs  text eol=lf
+*.js   text eol=lf
+*.py   text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.md   text eol=lf
+
+# Les livrables : jamais de conversion, jamais de tentative de fusion.
+*.webp binary
+*.mp3  binary
+*.wav  binary
+*.mp4  binary
+*.pdf  binary

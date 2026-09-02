@@ -1,0 +1,21 @@
+# Ce qui est versionne mais NE DOIT PAS etre servi.
+#
+# Le deploiement sert la racine du depot. Sans ce fichier, le brief serait
+# accessible publiquement sur le domaine du promoteur -- il contient le prix du
+# projet, la relation commerciale et la situation du prestataire. Les deux PDF
+# et le journal de decisions sont des documents de travail internes.
+CLAUDE.md
+PLAN.md
+docs/
+
+# Le banc de mesure et la chaine d'encodage n'ont rien a faire en ligne.
+tools/
+
+# Deja hors depot, repete ici par securite : si l'un d'eux revenait un jour
+# dans le suivi de version, il ne partirait toujours pas en deploiement.
+rushes/
+audio/sources/
+build/
+
+# Document de travail interne : etat de la phase, mesures, points a surveiller.
+ETAT.md

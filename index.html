@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- EN ATTENTE : titre, description et donnees structurees viendront avec les
+     textes. Ce qui est ici est factuel et suffit a ne pas livrer une page sans
+     titre ; rien n'y est invente sur le projet. -->
+<title>Noverre</title>
+<meta name="description" content="Une visite du batiment, etage par etage, au defilement.">
+<!-- Sans cette ligne le navigateur reclame /favicon.ico a chaque chargement et
+     recolte un 404. Un `data:` vide coupe la requete sans rien inventer : la
+     vraie icone viendra avec les elements de marque. -->
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --fond: #0b0b0c;      /* proche du noir sans y etre : un noir pur ferait */
+    --texte: #ece9e4;     /* vibrer les bords de l'image                     */
+    --discret: #7a7873;
+  }
+  * { box-sizing: border-box; }
+
+  /* Mode parcours : le defilement natif est desactive, la page ne defile pas,
+     c'est le moteur a impulsions qui deplace la position. */
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--fond); color: var(--texte);
+    overflow: hidden; overscroll-behavior: none; touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    font: 400 17px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .evitement {
+    position: absolute; left: -9999px; top: 0; z-index: 10;
+    background: var(--texte); color: var(--fond);
+    padding: 12px 16px; border-radius: 0 0 6px 0;
+  }
+  .evitement:focus { left: 0; }
+  :focus-visible { outline: 2px solid var(--texte); outline-offset: 3px; }
+
+  .scene {
+    position: fixed; inset: 0;
+    /* UNE SEULE COLONNE, declaree. Et chaque enfant la nomme explicitement plus
+       bas : le placement automatique refuse de superposer deux elements et
+       CREE une colonne pour le second, ce qui retrecit toute la scene et la
+       decentre. Les elements places a la main, eux, ont le droit de se
+       recouvrir -- et c'est bien ce qu'on veut : les deux canvas s'echangent,
+       l'ecran des faits vient par-dessus. */
+    display: grid;
+    grid-template-rows: 1fr auto 1fr;
+    grid-template-columns: 1fr;
+    align-items: center;
+  }
+
+  /* aspect-ratio reserve la boite avant la premiere image : le CLS reste
+     strictement a zero. La bande 16:9 est centree, jamais recadree : la source
+     fait 1280x720 et recadrer en portrait couterait 68 % de la largeur. */
+  #scene, #eau {
+    /* LA COLONNE EST EXPLICITE, et elle doit l'etre.
+       La grille n'a qu'une rangee declaree, pas de colonnes. Deux elements
+       places en `grid-row: 2` sans colonne ne se superposent PAS : le placement
+       automatique donne la colonne 1 au premier et en CREE une deuxieme pour le
+       second, qui pousse toute la scene sur le cote. */
+    grid-row: 2; grid-column: 1;
+    width: 100%; aspect-ratio: 16 / 9;
+    display: block; background: #000;
+    will-change: filter;
+  }
+  /* Les deux occupent la meme case de la grille : l'un cache l'autre. */
+  #eau[hidden], #scene[hidden] { display: none; }
+  /* Le bassin repond au doigt et au curseur, c'est tout son sujet. */
+  #eau { touch-action: none; }
+
+  /* L'ECRAN DES FAITS.
+     Il couvre toute la zone de scene, par-dessus les deux canvas, et non le bas
+     de page : la page se ferme sur du noir plein, pas sur un pied de tableau.
+     Son opacite est pilotee par la progression du dernier segment. */
+  .faits {
+    grid-row: 1 / -1; grid-column: 1;
+    /* La grille centre ses enfants ; celui-ci doit au contraire remplir toute
+       sa hauteur, sans quoi le noir ne couvre pas la scene et l'image reste
+       visible au-dessus et au-dessous du texte. */
+    align-self: stretch;
+    position: relative; z-index: 3;
+    display: grid; place-items: center;
+    background: #000;
+    opacity: 0; pointer-events: none;
+    padding: 6vh 20px;
+  }
+  .faits[data-vu="oui"] { pointer-events: auto; }
+  .faits > div { max-width: 32rem; text-align: center; text-wrap: balance; }
+  /* Chaque ligne monte de quelques pixels en apparaissant. Le decalage est
+     porte par une variable pour que le code n'ecrive qu'un nombre. */
+  .faits p, .faits h2 {
+    margin: 0 0 1.15em;
+    opacity: var(--vu, 0);
+    transform: translateY(calc((1 - var(--vu, 0)) * 10px));
+  }
+  .faits h2 {
+    font-size: clamp(1.5rem, 5vw, 2.4rem);
+    letter-spacing: .22em; font-weight: 400; margin-bottom: 1.6em;
+  }
+  .faits p { color: var(--discret); line-height: 1.7; }
+  .faits p.fort { color: inherit; }
+  .faits a { color: inherit; text-underline-offset: .25em; }
+
+  /* --- LA NARRATION --------------------------------------------------------
+     EN BAS A GAUCHE, ET JAMAIS CENTREE.
+
+     Le visiteur pousse vers le bas : un texte en bas arrive dans la direction
+     ou son oeil va deja. Et un texte centre sur une image se lit comme un
+     carton de film ou une plaquette de promoteur, ce que ce site n'est pas.
+
+     ANCREE SUR LA FENETRE, ET NON SUR LA BANDE D'IMAGE. Le premier essai la
+     posait dans la case de grille des canvas, avec le meme `aspect-ratio` --
+     ce qui semblait plus juste. Ca ne l'etait pas : des que la fenetre est plus
+     courte que la bande, celle-ci deborde en haut et en bas, et un texte ancre
+     a son bord bas tombe hors de l'ecran. Il etait coupe en deux sur une
+     fenetre de 1280 x 625.
+
+     Sur une fenetre au format de la bande -- le cas courant -- les deux
+     coincident. Sur une fenetre plus haute, le texte se pose sous l'image, sur
+     le fond sombre : toujours en bas a gauche, toujours lisible. */
+  .narration {
+    position: fixed; inset: 0; z-index: 2;
+    pointer-events: none;
+  }
+  .narration[hidden] { display: none; }
+
+  /* LE VOILE. Le bas gauche des treize plans va du noir franc au blanc --
+     sombre sur le spa, les velos et le yoga, franchement clair sur la salle de
+     sport et sur la piscine ou le travertin est en plein soleil. Sans lui, la
+     meilleure ligne du site serait invisible sur la piscine.
+
+     Il n'existe QUE quand le texte est la : son opacite est la meme fonction de
+     la position, ecrite par le code. L'image n'est jamais assombrie quand il
+     n'y a rien a lire. */
+  #narration-voile {
+    position: absolute; inset: auto 0 0 0; height: 34%;
+    background: linear-gradient(to bottom, transparent, #000);
+    opacity: 0;
+  }
+
+  #narration-ligne {
+    position: absolute; left: 0; bottom: 0;
+    margin: 0;
+    /* La meme marge gauche que le reste du site. La marge basse vaut plus de
+       deux hauteurs de ligne : sur iOS la barre d'outils de Safari apparait et
+       disparait au defilement, et un texte colle au bord se ferait recouvrir
+       par intermittence. */
+    padding: 0 20px max(52px, env(safe-area-inset-bottom) + 44px) 20px;
+    /* Bornee a une mesure d'environ quarante caracteres : la plus longue des
+       treize en fait cinquante-quatre, donc deux lignes. Jamais trois. */
+    max-width: 21em;
+    font: 400 clamp(16px, 1.5vw, 20px)/1.45 ui-sans-serif, system-ui,
+          -apple-system, Segoe UI, sans-serif;
+    color: var(--texte);
+    text-wrap: balance;
+    /* Un cerne tres discret : le voile fait l'essentiel, celui-ci rattrape les
+       eclats speculaires que le degrade ne couvre pas -- une facette de
+       travertin au soleil, un reflet sur l'eau. */
+    text-shadow: 0 1px 12px rgba(0, 0, 0, .55);
+    opacity: 0;
+  }
+
+  /* --- Le curseur --------------------------------------------------------- */
+  #curseur {
+    position: fixed; left: 0; top: 0; z-index: 20;
+    width: 26px; height: 26px; margin: -13px 0 0 -13px;
+    /* UN TRAIT CLAIR DOUBLE D'UN CERNE SOMBRE.
+       Un seul trait clair ne peut pas tenir partout : sur l'eau du bassin en
+       plein jour, un blanc casse a 55 % ne creusait que 0,074 de luminance --
+       sept pour cent sur un pixel de haut, donc rien. Le cerne sombre porte le
+       contraste sur les fonds clairs, le trait clair sur les fonds sombres, et
+       il y en a toujours un des deux qui parle. C'est l'ecran du bassin qui
+       l'exige : c'est le seul ou le curseur est un outil et pas un ornement.
+       Pire cas mesure sur toute la gamme de fonds : 0,074 -> 0,290. */
+    border: 1px solid rgba(236,233,228,.92); border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.42),
+                inset 0 0 0 1px rgba(0,0,0,.30);
+    pointer-events: none; opacity: 0;
+    transition: width 260ms ease, height 260ms ease, margin 260ms ease,
+                border-color 260ms ease, opacity 260ms ease;
+    will-change: transform;
+  }
+  #curseur[data-actif="oui"] { opacity: 1; }
+  #curseur[data-survol="oui"] {
+    width: 52px; height: 52px; margin: -26px 0 0 -26px;
+    border-color: rgba(236,233,228,1);
+  }
+
+  /* Le curseur natif disparait, sauf la ou il porte une information que le
+     notre ne porte pas -- une zone de texte selectionnable. */
+  html[data-curseur="perso"], html[data-curseur="perso"] * { cursor: none; }
+
+  /* Sur un appareil tactile il n'y a pas de pointeur : on ne dessine rien. */
+  @media (hover: none), (pointer: coarse) {
+    #curseur { display: none; }
+    html[data-curseur="perso"], html[data-curseur="perso"] * { cursor: auto; }
+  }
+
+  /* --- L'indice de defilement -------------------------------------------- */
+  #indice {
+    position: fixed; left: 50%; bottom: 34px; z-index: 6;
+    transform: translateX(-50%);
+    width: 22px; height: 34px; border-radius: 12px;
+    border: 1px solid rgba(236,233,228,.35);
+    opacity: 0; animation: indice-apparait 1.2s ease 200ms forwards;
+    pointer-events: none;
+  }
+  #indice[hidden] { display: none; }
+  #indice span {
+    position: absolute; left: 50%; top: 8px;
+    width: 2px; height: 5px; border-radius: 1px;
+    background: var(--texte); transform: translateX(-50%);
+    animation: indice-glisse 1.9s cubic-bezier(.4,0,.2,1) infinite;
+  }
+  @keyframes indice-apparait { to { opacity: .75; } }
+  @keyframes indice-glisse {
+    0%   { transform: translate(-50%, 0);    opacity: 0; }
+    22%  { opacity: 1; }
+    72%  { transform: translate(-50%, 13px); opacity: 0; }
+    100% { transform: translate(-50%, 13px); opacity: 0; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #indice span { animation: none; }
+  }
+
+  /* --- La bascule son ----------------------------------------------------- */
+  /* Elle reste accessible en permanence : c'est une exigence, pas un confort. */
+  #son {
+    position: fixed; right: 20px; top: 20px; z-index: 8;
+    display: flex; align-items: center; gap: 9px;
+    font: 500 11px/1 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .18em; text-transform: uppercase;
+    color: var(--texte); background: transparent;
+    border: 0; padding: 8px; cursor: pointer;
+    opacity: .62; transition: opacity 400ms ease;
+  }
+  #son:hover, #son:focus-visible { opacity: 1; }
+
+  /* Trois barres, pilotees par le vumetre. `transform` seul est anime : c'est
+     la seule propriete que le compositeur traite sans recalculer la page. */
+  .barres { display: flex; align-items: flex-end; gap: 2px; height: 13px; }
+  .barres i {
+    display: block; width: 2px; height: 13px;
+    background: currentColor; border-radius: 1px;
+    transform-origin: bottom; transform: scaleY(.12);
+  }
+
+  /* --- La Porte ----------------------------------------------------------- */
+  #porte { position: fixed; inset: 0; z-index: 6; pointer-events: none; }
+  #porte[data-etat="choix"] { pointer-events: auto; }
+  #porte[data-etat="fini"] { display: none; }
+
+  /* Le voile est le noir dont le batiment sort au drop. */
+  #porte-voile { position: absolute; inset: 0; background: #000; }
+
+  /* Le logo, a la racine et AU-DESSUS du voile.
+
+     mix-blend-mode: difference l'inverse EN TEMPS REEL sur ce qui est dessous :
+     blanc sur le noir du voile, puis negatif du batiment des que le voile se
+     leve. C'est la difference entre un logo blanc pose sur une image et un logo
+     qui reagit a l'image. */
+  #porte-logo {
+    position: fixed; z-index: 7;
+    left: 50%; top: 50%;
+    /* Plus large que sur Parkside, et c'est la geometrie du mot qui le veut :
+       NOVERRE est long et fin -- son encre occupe 86,7 % de la largeur du
+       fichier pour un rapport de 6,90, contre 76,3 % et 3,21 la-bas. A 46vw il
+       aurait paru maigre. A 52vw son encre fait environ 540 px de large pour
+       78 de haut, ce qui lui rend la presence qu'un mot-symbole doit avoir. */
+    width: min(46vw, 520px); height: auto;
+    /* Le fichier est noir sur transparent : on l'inverse pour l'avoir en blanc,
+       plutot que de dupliquer le fichier. Le flou est pilote par le code. */
+    filter: invert(1) blur(22px);
+    mix-blend-mode: difference;
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(.82);
+    will-change: opacity, transform, filter;
+    pointer-events: none;
+  }
+
+  #porte-choix {
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+    opacity: 1;
+    /* La duree est posee par le code depuis PORTE_SORTIE_CHOIX, pour qu'elle
+       vive au meme endroit que le reste du minutage de l'amorce. */
+    transition: opacity var(--sortie, 550ms) cubic-bezier(.4, 0, .2, 1);
+  }
+  /* Pendant le fondu, plus rien ne se clique : un second clic pendant la sortie
+     relancerait l'amorce. */
+  #porte-choix[data-sortie="oui"] { opacity: 0; pointer-events: none; }
+  /* `display` gagne sur l'attribut `hidden` : sans cette ligne les deux boutons
+     resteraient visibles sous le logo pendant toute l'amorce. */
+  #porte-choix[hidden] { display: none; }
+
+  /* Le choix principal au centre, le second dessous et discret : ce ne sont pas
+     deux options equivalentes. */
+  .porte-boutons { display: grid; justify-items: center; gap: 18px; }
+  .porte-boutons button {
+    font: 500 12px/1 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .18em; text-transform: uppercase;
+    color: var(--texte); background: transparent;
+    border: 1px solid rgba(236,233,228,.3); border-radius: 999px;
+    padding: 13px 24px; cursor: none;
+    transition: border-color 500ms ease, background 500ms ease, opacity 500ms ease;
+  }
+  .porte-boutons button.principal {
+    font-size: 15px; letter-spacing: .2em;
+    padding: 22px 52px;
+    border-color: rgba(236,233,228,.55);
+  }
+  .porte-boutons button:not(.principal) {
+    font-size: 10px; letter-spacing: .16em;
+    border-color: transparent; color: var(--discret);
+    padding: 8px 14px;
+  }
+  .porte-boutons button:hover, .porte-boutons button:focus-visible {
+    border-color: rgba(236,233,228,.75); background: rgba(236,233,228,.06);
+    color: var(--texte);
+  }
+
+  /* La phrase en bas de l'ecran, avec le casque juste au-dessus. */
+  #porte-note {
+    position: absolute; left: 50%; bottom: 42px;
+    transform: translateX(-50%);
+    margin: 0; padding: 0 24px;
+    display: grid; justify-items: center; gap: 12px;
+    text-align: center; color: #fff; opacity: .55;
+  }
+  #porte-note span { font-size: 12px; letter-spacing: .04em; max-width: 32rem; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #porte-logo { transition: none; }
+  }
+
+  /* EN HAUT A DROITE, ET PLUS EN BAS A GAUCHE : la narration occupe desormais
+     ce coin-la. Les deux ne se disputent pas la place, et l'arbitrage est
+     simple -- le temoin est fait pour etre TROUVE, la narration pour etre LUE.
+     Il descend sous le bouton du son, qui garde le coin. */
+  #temoin {
+    position: fixed; right: 20px; top: 52px; z-index: 5;
+    font: 12px/1 ui-monospace, Menlo, monospace;
+    color: var(--discret); background: rgba(0,0,0,.6);
+    padding: 6px 8px; border-radius: 4px; pointer-events: none;
+  }
+  #temoin[data-degrade="true"] { color: #fc6; }
+  /* Sous le plancher de 30 images par seconde, le temoin le dit franchement :
+     c'est le seuil que le site doit tenir sur un telephone, et il doit se voir
+     sans avoir a lire le chiffre. */
+  #temoin[data-bas="true"] { color: #f77; }
+
+  /* Mouvement reduit : le document redevient un document. Defilement natif
+     rendu, plus aucune position fixe, une image fixe choisie par sequence.
+     Cette version doit rester BELLE : c'est une version, pas une punition. */
+  @media (prefers-reduced-motion: reduce) {
+    html, body {
+      height: auto; overflow: visible; touch-action: auto;
+      -webkit-user-select: text; user-select: text;
+    }
+    .scene {
+      position: static;
+      min-height: 100svh;
+      display: grid; place-content: center;
+      padding: 8vh 0;
+    }
+    #scene, #eau { grid-row: auto; grid-column: auto; }
+    /* La narration sort de la superposition et devient un paragraphe du
+       document, sous l'image. Le voile n'a plus de raison d'etre : rien n'est
+       peint par-dessus quoi que ce soit. Cette version doit rester belle --
+       c'est une version, pas une punition. */
+    .narration {
+      grid-row: auto; grid-column: auto;
+      aspect-ratio: auto; position: static;
+    }
+    #narration-voile { display: none; }
+    #narration-ligne {
+      position: static; opacity: 1;
+      padding: clamp(16px, 4vh, 40px) 20px 0;
+      max-width: 24em; text-shadow: none;
+    }
+    /* En mouvement reduit, les faits ne sont plus un voile qui se leve : ils
+       sont la derniere section du document, dans le flux, deja lisible. */
+    .faits {
+      grid-row: auto; grid-column: auto;
+      opacity: 1; pointer-events: auto;
+      min-height: 60svh; padding-top: 12vh;
+    }
+  }
+</style>
+</head>
+<body>
+
+<a class="evitement" href="#contenu">Aller au contenu</a>
+
+<main id="contenu">
+  <section class="scene" aria-label="Noverre, etage par etage">
+    <!-- Les libelles decrivent ce que l'image montre reellement. Ils ne sont
+         pas du texte commercial en attente : un lecteur d'ecran doit savoir ce
+         qu'il y a a l'ecran des maintenant. -->
+    <canvas id="scene" role="img"
+            aria-label="La facade du batiment vue depuis la rue, la nuit se retirant sur le parc."></canvas>
+
+    <!-- Le bassin : le seul ecran de la page rendu par WebGL. Il occupe la meme
+         case de la grille que #scene et prend sa place sur la derniere
+         sequence, ou il dessine lui-meme la plaque. `hidden` le retire aussi de
+         l'arbre d'accessibilite partout ailleurs, donc les deux canvas ne sont
+         jamais annonces ensemble. -->
+    <canvas id="eau" hidden role="img"
+            aria-label="La piscine du toit a la tombee de la nuit, la ville au loin, l'eau qui bouge sous la main."></canvas>
+
+    <!-- LA NARRATION. Le texte est ecrit dans le DOM au changement de segment,
+         et non quand il devient visible : un lecteur d'ecran doit le trouver
+         meme peint par-dessus une image, et meme a opacite nulle.
+
+         `aria-live` annonce le changement de ligne sans voler le focus, et
+         `aria-hidden` suit la visibilite reelle -- on n'annonce pas une ligne
+         que personne ne voit encore. -->
+    <div class="narration" id="narration" hidden>
+      <div id="narration-voile" aria-hidden="true"></div>
+      <p id="narration-ligne" aria-live="polite"></p>
+    </div>
+
+    <!-- L'ecran des faits. Il ferme la page : du texte sur noir, aucun son.
+         Il vit dans le DOM du premier au dernier instant -- un lecteur d'ecran
+         et un moteur de recherche doivent le trouver meme s'il n'est pas
+         encore peint -- et ce sont l'opacite et `inert` qui le decouvrent. -->
+    <section id="faits" class="faits" inert aria-label="Noverre, les faits">
+      <div id="faits-lignes"></div>
+    </section>
+  </section>
+</main>
+
+<!-- La bascule son : trois barres branchees sur le bus principal, qui bougent
+     avec ce qu'on entend reellement. Elle reste accessible en permanence. -->
+<button id="son" type="button" aria-pressed="false" aria-label="Son">
+  <span class="barres" aria-hidden="true"><i></i><i></i><i></i></span>
+  <span id="son-mot">Son</span>
+</button>
+
+<!-- LA PORTE, puis l'amorce. Elle couvre tout jusqu'au drop.
+     Le visiteur choisit d'entrer avec ou sans le son : les navigateurs bloquent
+     le son tant que personne ne le demande, et faire de cette contrainte le
+     premier ecran fait arriver la plupart des visiteurs EN AYANT CHOISI
+     d'ecouter -- l'inverse exact d'une video qui demarre muette et le reste. -->
+<div id="porte" data-etat="choix">
+  <div id="porte-voile"></div>
+  <div id="porte-choix">
+    <div class="porte-boutons">
+      <button type="button" data-son="oui" class="principal">Entrer avec le son</button>
+      <button type="button" data-son="non">Entrer en silence</button>
+    </div>
+    <p id="porte-note">
+      <svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18">
+        <path d="M4 14v-2a8 8 0 0 1 16 0v2" fill="none" stroke="currentColor"
+              stroke-width="1.4" stroke-linecap="round"/>
+        <rect x="2.6" y="13.4" width="4" height="7" rx="2" fill="currentColor"/>
+        <rect x="17.4" y="13.4" width="4" height="7" rx="2" fill="currentColor"/>
+      </svg>
+      <span>La bande sonore fait partie de Noverre. C'est mieux avec.</span>
+    </p>
+  </div>
+</div>
+
+<!-- Le logo vit A LA RACINE, et non dans #porte : `mix-blend-mode` ne se
+     melange qu'avec ce qui est peint sous lui DANS LE MEME contexte
+     d'empilement. Place dans #porte, il n'aurait vu que le voile noir et
+     l'inversion serait restee un simple blanc. Ici il voit le batiment. -->
+<img id="porte-logo" src="/assets/noverre.png" alt="Noverre">
+
+<div id="curseur" aria-hidden="true"></div>
+
+<div id="indice" aria-hidden="true"><span></span></div>
+
+<div id="temoin"></div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

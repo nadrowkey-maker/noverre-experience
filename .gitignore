@@ -1,0 +1,25 @@
+# Matiere source, jamais livree, jamais versionnee.
+# rushes/ pese ~200 Mo et audio/sources/ ~250 Mo : les deux se conservent
+# hors depot. Les livrables qui en derivent (audio/*.mp3, frames/)
+# sont versionnes, eux, sinon un clone neuf ne peut plus deployer.
+rushes/
+# video/ est la MEME matiere que rushes/, sous les noms de telechargement
+# d'origine. La garder doublerait 122 Mo dans l'historique pour rien, et
+# l'historique d'un binaire ne se nettoie pas.
+video/
+audio/sources/
+
+# Tout l'intermediaire : extraction PNG, encodages du banc, comparaisons de
+# qualite, sauvegarde audio d'avant reencodage. Reproductible par tools/.
+#
+# Les deux jeux definitifs sont dans frames/ et SONT versionnes : rushes/ etant
+# hors depot, un clone neuf ne pourrait pas les regenerer. Ils y ont ete
+# deplaces une seule fois, apres l'arbitrage de format et de qualite -- un jeu
+# commite puis remplace laisserait ses blobs dans l'historique pour toujours.
+build/
+
+node_modules/
+dist/
+.DS_Store
+
+# assets/ est servi et versionne : le logo n'est pas de la matiere source.
