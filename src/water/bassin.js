@@ -144,9 +144,24 @@ export function creerBassin(canvas) {
   let pointeur = null, precX = 0, precY = 0, aPointeur = false;
   let vitesse = 0, clics = 0, clicsVus = 0;
 
+  // LE RECTANGLE SE GARDE, IL NE SE REDEMANDE PAS A CHAQUE MOUVEMENT.
+  //
+  // `getBoundingClientRect` force le navigateur a recalculer la mise en page
+  // sur-le-champ. Il etait appele a CHAQUE `pointermove` : une souris de jeu en
+  // envoie jusqu'a mille par seconde, soit une quinzaine de recalculs forces
+  // par trame -- et sur la piscine, la seule scene ou le pointeur compte, qui
+  // est aussi la plus chargee du parcours.
+  //
+  // La bande est en position fixe : son rectangle ne change QUE quand la
+  // fenetre change de taille. On le garde donc, et on l'oublie a ce
+  // moment-la -- et seulement a ce moment-la.
+  let rect = null;
+  addEventListener('resize', () => { rect = null; }, { passive: true });
+
   canvas.addEventListener('pointermove', (e) => {
-    const r = canvas.getBoundingClientRect();
-    pointeur = [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height,
+    if (!rect) rect = canvas.getBoundingClientRect();
+    pointeur = [(e.clientX - rect.left) / rect.width,
+                (e.clientY - rect.top) / rect.height,
                 e.clientX, e.clientY];
   }, { passive: true });
   canvas.addEventListener('pointerleave', () => { pointeur = null; }, { passive: true });
