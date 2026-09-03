@@ -129,6 +129,16 @@ export function creerAnneau(source, { taille, pasImage: pasInitial = 1, nbImages
       if (lances >= paquet) return;
       const j = surGrille(idx);
       if (decodees.has(j) || enCours.has(j)) return;
+      // LA LIAISON EST-ELLE LIBRE ? Sans cette question, `paquet` borne les
+      // demandes par appel mais pas les requetes EN VOL, et comme on appelle a
+      // chaque trame la file grossit sans fin. Ce qui est refuse ici sera
+      // redemande a la trame suivante, depuis la position d'alors : une file
+      // perimee devient une demande a jour.
+      //
+      // Les octets deja en memoire ne passent pas par la liaison : on les
+      // decode meme quand elle est saturee. C'est ce qui fait que revenir en
+      // arriere repond instantanement.
+      if (!source.aEnMemoire(j) && !source.placeSurLaLiaison()) return;
       assurer(j);
       lances++;
     };
@@ -168,6 +178,10 @@ export function creerAnneau(source, { taille, pasImage: pasInitial = 1, nbImages
     for (let k = 0; k < cible && lances < paquet; k++) {
       const i = surGrille(depuis + sens * k * pasImage);
       if (decodees.has(i) || enCours.has(i)) continue;
+      // Le meme plafond, et il compte double ici : l'amorcage des voisins
+      // tourne sur DEUX segments a chaque trame, en plus du segment courant.
+      // C'est lui qui remplissait la file le plus vite.
+      if (!source.aEnMemoire(i) && !source.placeSurLaLiaison()) break;
       assurer(i);
       lances++;
     }

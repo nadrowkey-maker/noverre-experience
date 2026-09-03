@@ -548,3 +548,44 @@ export const VUMETRE_T_DESCENTE = 0.25;
  * s'arrete tout de suite ait deja une eau vivante sous la main.
  */
 export const EVEIL_BASSIN = 0.06;
+
+/**
+ * LE PLAFOND DE REQUETES EN VOL, TOUTES SEQUENCES CONFONDUES.
+ *
+ * C'est la correction du gel de l'image sur le site deploye, et le defaut
+ * etait invisible en local.
+ *
+ * L'anneau borne le nombre de demandes PAR APPEL (`paquet`), jamais le nombre
+ * de requetes SIMULTANEMENT EN VOL. Or `pourvoir` est appele a chaque trame, et
+ * `alimenterVoisins` fait de meme sur les deux segments voisins : a soixante-
+ * quinze trames par seconde, cela represente jusqu'a sept cents nouvelles
+ * requetes par seconde.
+ *
+ * En local, chacune revient en 0,45 ms : le debit de sortie depasse le debit
+ * d'entree et rien ne s'accumule. Sur un vrai reseau chacune prend 50 a 200 ms,
+ * et la file grossit sans borne. Mesure sur le site deploye, en defilant
+ * doucement :
+ *
+ *   pas de defilement    0     6     13
+ *   requetes lancees    38   249    562
+ *   requetes TERMINEES  27    27     27
+ *   en vol              11   222    535
+ *
+ * Plus une seule ne se termine : l'image dont on a besoin MAINTENANT attend
+ * derriere cinq cents demandes emises pour des positions deja depassees.
+ * L'anneau ne recoit plus rien, `image()` rend la plus proche qu'il possede --
+ * la derniere -- et l'ecran se fige pendant que le son et le texte continuent.
+ * Revenir en arriere « debloque » parce que les octets d'avant sont, eux, deja
+ * en memoire.
+ *
+ * Huit : un navigateur n'ouvre que six connexions par origine en HTTP/1.1, et
+ * ce qui compte en HTTP/2 n'est pas le nombre de flux mais la LONGUEUR DE LA
+ * FILE. Huit images de 120 Ko occupent la liaison sans jamais faire attendre
+ * celle du centre, et suffisent largement : le decodage n'en absorbe que trente
+ * a soixante par seconde.
+ *
+ * Ce qui est refuse n'est pas perdu : `pourvoir` redemande a la trame suivante,
+ * en repartant de la position COURANTE. Le plafond transforme donc une file
+ * d'attente perimee en une demande toujours a jour.
+ */
+export const PLAFOND_REQUETES_EN_VOL = 8;
